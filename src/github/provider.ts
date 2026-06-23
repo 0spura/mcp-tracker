@@ -308,6 +308,38 @@ export class GitHubProvider implements TrackerProvider {
     );
   }
 
+  async toggleChecklistItem(
+    repo: TrackerRepo,
+    issueNumber: number,
+    itemText: string,
+    checked?: boolean
+  ): Promise<{ matched: string; checked: boolean }> {
+    const issue = await this.getIssue(repo, issueNumber);
+    const lines = issue.body.split("\n");
+    const needle = itemText.toLowerCase();
+
+    let matchedLine: string | null = null;
+    let newChecked = false;
+
+    const updated = lines.map((line) => {
+      const isUnchecked = /^- \[ \] /i.test(line);
+      const isChecked = /^- \[x\] /i.test(line);
+      if (!isUnchecked && !isChecked) return line;
+
+      const text = line.replace(/^- \[[x ]\] /i, "").toLowerCase();
+      if (!text.includes(needle)) return line;
+
+      matchedLine = line.replace(/^- \[[x ]\] /i, "").trim();
+      newChecked = checked !== undefined ? checked : isUnchecked;
+      return newChecked ? line.replace(/^- \[ \] /i, "- [x] ") : line.replace(/^- \[x\] /i, "- [ ] ");
+    });
+
+    if (!matchedLine) throw new Error(`No checklist item matching "${itemText}" found in issue #${issueNumber}`);
+
+    await this.updateIssue(repo, issueNumber, { body: updated.join("\n") });
+    return { matched: matchedLine, checked: newChecked };
+  }
+
   async mergePR(repo: TrackerRepo, number: number, method: "merge" | "squash" | "rebase" = "squash"): Promise<void> {
     gh<unknown>(
       ["api", "--method", "PUT", `repos/${repoFlag(repo)}/pulls/${number}/merge`, "--input", "-"],

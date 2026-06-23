@@ -317,6 +317,21 @@ export function createServer(): McpServer {
   );
 
   server.tool(
+    "toggle_checklist_item",
+    "Mark or unmark a checklist item in an issue body. Matches by substring — no need for the exact full text.",
+    {
+      repo: REPO_PARAM,
+      issue_number: z.number().int().positive(),
+      item_text: z.string().describe("Partial or full text of the checklist item to toggle"),
+      checked: z.boolean().optional().describe("Force to checked (true) or unchecked (false). Omit to toggle."),
+    },
+    async ({ repo, issue_number, item_text, checked }) => {
+      const result = await provider.toggleChecklistItem(ctx.resolveRepo(repo), issue_number, item_text, checked);
+      return text(`"${result.matched}" → ${result.checked ? "[x]" : "[ ]"}`);
+    }
+  );
+
+  server.tool(
     "merge_pr",
     "Merge a pull request",
     {
