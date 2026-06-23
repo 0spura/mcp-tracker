@@ -340,6 +340,13 @@ export class GitHubProvider implements TrackerProvider {
     return { matched: matchedLine, checked: newChecked };
   }
 
+  async requestReviewers(repo: TrackerRepo, prNumber: number, reviewers: string[]): Promise<void> {
+    gh<unknown>(
+      ["api", "--method", "POST", `repos/${repoFlag(repo)}/pulls/${prNumber}/requested_reviewers`, "--input", "-"],
+      { reviewers }
+    );
+  }
+
   async mergePR(repo: TrackerRepo, number: number, method: "merge" | "squash" | "rebase" = "squash"): Promise<void> {
     gh<unknown>(
       ["api", "--method", "PUT", `repos/${repoFlag(repo)}/pulls/${number}/merge`, "--input", "-"],

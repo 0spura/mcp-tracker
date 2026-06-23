@@ -31,9 +31,21 @@ export function createServer(): McpServer {
       repo: z.string().optional().describe("Repository as owner/repo"),
       project_number: z.number().int().positive().optional().describe("GitHub Projects V2 number"),
       default_assignee: z.string().optional().describe("GitHub username to assign by default"),
+      default_base: z.string().optional().describe("Default base branch for PRs, e.g. dev or main"),
+      default_merge_method: z.enum(["merge", "squash", "rebase"]).optional().describe("Default merge method for merge_pr"),
+      default_reviewers: z.array(z.string()).optional().describe("GitHub usernames to request review from on every PR"),
+      default_milestone: z.string().optional().describe("Milestone title to apply to new issues by default"),
     },
-    async ({ repo, project_number, default_assignee }) => {
-      ctx.set({ repo, projectNumber: project_number, defaultAssignee: default_assignee });
+    async ({ repo, project_number, default_assignee, default_base, default_merge_method, default_reviewers, default_milestone }) => {
+      ctx.set({
+        repo,
+        projectNumber: project_number,
+        defaultAssignee: default_assignee,
+        defaultBase: default_base,
+        defaultMergeMethod: default_merge_method,
+        defaultReviewers: default_reviewers,
+        defaultMilestone: default_milestone,
+      });
       return json(ctx.snapshot());
     }
   );
@@ -76,10 +88,11 @@ export function createServer(): McpServer {
     async ({ repo, title, body, labels, assignees, milestone, project_fields }) => {
       const resolvedRepo = ctx.resolveRepo(repo);
       const resolvedAssignees = assignees ?? (ctx.defaultAssignee ? [ctx.defaultAssignee] : undefined);
+      const resolvedMilestone = milestone ?? ctx.defaultMilestone ?? undefined;
       const issue = await provider.createIssue(resolvedRepo, title, body, {
         labels,
         assignees: resolvedAssignees,
-        milestone,
+        milestone: resolvedMilestone,
       });
 
       if (ctx.projectNumber) {
@@ -168,16 +181,27 @@ export function createServer(): McpServer {
 
   server.tool(
     "create_pr",
-    "Create a pull request",
+    "Create a pull request. Uses default_base and default_reviewers from context when set.",
     {
       repo: REPO_PARAM,
       title: z.string(),
       body: z.string(),
       head: z.string().describe("Head branch"),
-      base: z.string().optional().describe("Base branch (defaults to default branch)"),
+      base: z.string().optional().describe("Base branch. Falls back to default_base from context, then repo default branch."),
+      reviewers: z.array(z.string()).optional().describe("Reviewers to request. Merged with default_reviewers from context."),
     },
-    async ({ repo, title, body, head, base }) =>
-      json(await provider.createPR(ctx.resolveRepo(repo), title, body, head, base))
+    async ({ repo, title, body, head, base, reviewers }) => {
+      const resolvedRepo = ctx.resolveRepo(repo);
+      const resolvedBase = base ?? ctx.defaultBase ?? undefined;
+      const pr = await provider.createPR(resolvedRepo, title, body, head, resolvedBase);
+
+      const allReviewers = [...new Set([...(ctx.defaultReviewers ?? []), ...(reviewers ?? [])])];
+      if (allReviewers.length > 0) {
+        await provider.requestReviewers(resolvedRepo, pr.number, allReviewers);
+      }
+
+      return json(pr);
+    }
   );
 
   server.tool(
@@ -333,15 +357,16 @@ export function createServer(): McpServer {
 
   server.tool(
     "merge_pr",
-    "Merge a pull request",
+    "Merge a pull request. Uses default_merge_method from context when set.",
     {
       repo: REPO_PARAM,
       number: z.number().int().positive(),
-      method: z.enum(["merge", "squash", "rebase"]).optional().describe("Merge method — defaults to squash"),
+      method: z.enum(["merge", "squash", "rebase"]).optional().describe("Merge method. Falls back to default_merge_method from context, then squash."),
     },
     async ({ repo, number, method }) => {
-      await provider.mergePR(ctx.resolveRepo(repo), number, method);
-      return text(`PR #${number} merged`);
+      const resolvedMethod = method ?? ctx.defaultMergeMethod ?? "squash";
+      await provider.mergePR(ctx.resolveRepo(repo), number, resolvedMethod);
+      return text(`PR #${number} merged via ${resolvedMethod}`);
     }
   );
 

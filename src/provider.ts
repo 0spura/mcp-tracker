@@ -42,6 +42,7 @@ export interface TrackerProvider {
   addIssueComment(repo: TrackerRepo, number: number, body: string): Promise<void>;
 
   toggleChecklistItem(repo: TrackerRepo, issueNumber: number, itemText: string, checked?: boolean): Promise<{ matched: string; checked: boolean }>;
+  requestReviewers(repo: TrackerRepo, prNumber: number, reviewers: string[]): Promise<void>;
   mergePR(repo: TrackerRepo, number: number, method?: "merge" | "squash" | "rebase"): Promise<void>;
   addPRComment(repo: TrackerRepo, number: number, body: string): Promise<void>;
   listComments(repo: TrackerRepo, type: "issue" | "pr", number: number): Promise<Array<{ id: number; author: string; body: string; createdAt: string }>>;

@@ -5,6 +5,10 @@ interface Context {
   repo: TrackerRepo | null;
   projectNumber: number | null;
   defaultAssignee: string | null;
+  defaultBase: string | null;
+  defaultMergeMethod: "merge" | "squash" | "rebase" | null;
+  defaultReviewers: string[];
+  defaultMilestone: string | null;
 }
 
 export class ContextStore {
@@ -12,6 +16,10 @@ export class ContextStore {
     repo: null,
     projectNumber: null,
     defaultAssignee: null,
+    defaultBase: null,
+    defaultMergeMethod: null,
+    defaultReviewers: [],
+    defaultMilestone: null,
   };
 
   resolveRepo(explicit?: string): TrackerRepo {
@@ -29,19 +37,30 @@ export class ContextStore {
     );
   }
 
-  set(opts: { repo?: string; projectNumber?: number; defaultAssignee?: string }): void {
+  set(opts: {
+    repo?: string;
+    projectNumber?: number;
+    defaultAssignee?: string;
+    defaultBase?: string;
+    defaultMergeMethod?: "merge" | "squash" | "rebase";
+    defaultReviewers?: string[];
+    defaultMilestone?: string;
+  }): void {
     if (opts.repo) this.ctx.repo = parseRepo(opts.repo);
     if (opts.projectNumber !== undefined) this.ctx.projectNumber = opts.projectNumber;
     if (opts.defaultAssignee !== undefined) this.ctx.defaultAssignee = opts.defaultAssignee;
+    if (opts.defaultBase !== undefined) this.ctx.defaultBase = opts.defaultBase;
+    if (opts.defaultMergeMethod !== undefined) this.ctx.defaultMergeMethod = opts.defaultMergeMethod;
+    if (opts.defaultReviewers !== undefined) this.ctx.defaultReviewers = opts.defaultReviewers;
+    if (opts.defaultMilestone !== undefined) this.ctx.defaultMilestone = opts.defaultMilestone;
   }
 
-  get projectNumber(): number | null {
-    return this.ctx.projectNumber;
-  }
-
-  get defaultAssignee(): string | null {
-    return this.ctx.defaultAssignee;
-  }
+  get projectNumber(): number | null { return this.ctx.projectNumber; }
+  get defaultAssignee(): string | null { return this.ctx.defaultAssignee; }
+  get defaultBase(): string | null { return this.ctx.defaultBase; }
+  get defaultMergeMethod(): "merge" | "squash" | "rebase" | null { return this.ctx.defaultMergeMethod; }
+  get defaultReviewers(): string[] { return this.ctx.defaultReviewers; }
+  get defaultMilestone(): string | null { return this.ctx.defaultMilestone; }
 
   snapshot(): Context & { detectedRepo: TrackerRepo | null } {
     return {
