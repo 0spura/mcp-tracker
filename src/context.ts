@@ -3,7 +3,7 @@ import type { TrackerRepo } from "./types.js";
 
 interface Context {
   repo: TrackerRepo | null;
-  projectNumber: number | null;
+  boardId: string | null;
   defaultAssignee: string | null;
   defaultBase: string | null;
   defaultMergeMethod: "merge" | "squash" | "rebase" | null;
@@ -14,7 +14,7 @@ interface Context {
 export class ContextStore {
   private ctx: Context = {
     repo: null,
-    projectNumber: null,
+    boardId: null,
     defaultAssignee: null,
     defaultBase: null,
     defaultMergeMethod: null,
@@ -39,7 +39,7 @@ export class ContextStore {
 
   set(opts: {
     repo?: string;
-    projectNumber?: number;
+    boardId?: string;
     defaultAssignee?: string;
     defaultBase?: string;
     defaultMergeMethod?: "merge" | "squash" | "rebase";
@@ -47,7 +47,7 @@ export class ContextStore {
     defaultMilestone?: string;
   }): void {
     if (opts.repo) this.ctx.repo = parseRepo(opts.repo);
-    if (opts.projectNumber !== undefined) this.ctx.projectNumber = opts.projectNumber;
+    if (opts.boardId !== undefined) this.ctx.boardId = opts.boardId;
     if (opts.defaultAssignee !== undefined) this.ctx.defaultAssignee = opts.defaultAssignee;
     if (opts.defaultBase !== undefined) this.ctx.defaultBase = opts.defaultBase;
     if (opts.defaultMergeMethod !== undefined) this.ctx.defaultMergeMethod = opts.defaultMergeMethod;
@@ -55,7 +55,7 @@ export class ContextStore {
     if (opts.defaultMilestone !== undefined) this.ctx.defaultMilestone = opts.defaultMilestone;
   }
 
-  get projectNumber(): number | null { return this.ctx.projectNumber; }
+  get boardId(): string | null { return this.ctx.boardId; }
   get defaultAssignee(): string | null { return this.ctx.defaultAssignee; }
   get defaultBase(): string | null { return this.ctx.defaultBase; }
   get defaultMergeMethod(): "merge" | "squash" | "rebase" | null { return this.ctx.defaultMergeMethod; }
@@ -75,7 +75,8 @@ export class ContextStore {
         encoding: "utf8",
         stdio: ["pipe", "pipe", "pipe"],
       }).trim();
-      const match = remote.match(/github\.com[/:]([^/]+?)\/([^/.]+)/);
+      // Handles git@host:owner/repo.git and https://host/owner/repo[.git]
+      const match = remote.match(/[/:]([^/:]+)\/([^/.]+?)(?:\.git)?$/);
       if (match) return { owner: match[1], repo: match[2] };
       return null;
     } catch {
