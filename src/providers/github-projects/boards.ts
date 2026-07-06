@@ -1,5 +1,5 @@
-import type { TrackerRepo, ProjectItem, ProjectField } from "../types.js";
-import { graphql, repoFlag, gh } from "./helpers.js";
+import type { TrackerRepo, ProjectItem, ProjectField } from "../../interfaces/types.js";
+import { graphql } from "../github/helpers.js";
 
 // GitHub interprets boardId as a numeric project number (Projects V2).
 function projectNumber(boardId: string): number {

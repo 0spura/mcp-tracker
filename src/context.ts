@@ -1,9 +1,10 @@
 import { execSync } from "child_process";
-import type { TrackerRepo } from "./types.js";
+import type { TrackerRepo } from "./interfaces/types.js";
 
 interface Context {
   repo: TrackerRepo | null;
   boardId: string | null;
+  activeIssue: number | null;
   defaultAssignee: string | null;
   defaultBase: string | null;
   defaultMergeMethod: "merge" | "squash" | "rebase" | null;
@@ -15,6 +16,7 @@ export class ContextStore {
   private ctx: Context = {
     repo: null,
     boardId: null,
+    activeIssue: null,
     defaultAssignee: null,
     defaultBase: null,
     defaultMergeMethod: null,
@@ -40,6 +42,7 @@ export class ContextStore {
   set(opts: {
     repo?: string;
     boardId?: string;
+    activeIssue?: number | null;
     defaultAssignee?: string;
     defaultBase?: string;
     defaultMergeMethod?: "merge" | "squash" | "rebase";
@@ -48,6 +51,7 @@ export class ContextStore {
   }): void {
     if (opts.repo) this.ctx.repo = parseRepo(opts.repo);
     if (opts.boardId !== undefined) this.ctx.boardId = opts.boardId;
+    if (opts.activeIssue !== undefined) this.ctx.activeIssue = opts.activeIssue;
     if (opts.defaultAssignee !== undefined) this.ctx.defaultAssignee = opts.defaultAssignee;
     if (opts.defaultBase !== undefined) this.ctx.defaultBase = opts.defaultBase;
     if (opts.defaultMergeMethod !== undefined) this.ctx.defaultMergeMethod = opts.defaultMergeMethod;
@@ -55,7 +59,14 @@ export class ContextStore {
     if (opts.defaultMilestone !== undefined) this.ctx.defaultMilestone = opts.defaultMilestone;
   }
 
+  resolveIssue(explicit?: number): number {
+    const n = explicit ?? this.ctx.activeIssue;
+    if (!n) throw new Error("No active issue. Set one with tracker_set_context (active_issue) or pass issue_number explicitly.");
+    return n;
+  }
+
   get boardId(): string | null { return this.ctx.boardId; }
+  get activeIssue(): number | null { return this.ctx.activeIssue; }
   get defaultAssignee(): string | null { return this.ctx.defaultAssignee; }
   get defaultBase(): string | null { return this.ctx.defaultBase; }
   get defaultMergeMethod(): "merge" | "squash" | "rebase" | null { return this.ctx.defaultMergeMethod; }

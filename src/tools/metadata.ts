@@ -1,15 +1,15 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ContextStore } from "../context.js";
-import type { TrackerProvider } from "../provider.js";
+import type { MetadataProvider } from "../interfaces/metadata.js";
 import { REPO_PARAM, json } from "./helpers.js";
 
-export function registerMetadataTools(server: McpServer, provider: TrackerProvider, ctx: ContextStore): void {
+export function registerMetadataTools(server: McpServer, metadata: MetadataProvider, ctx: ContextStore): void {
   server.tool(
     "list_labels",
     "List all labels in a repository",
     { repo: REPO_PARAM },
-    async ({ repo }) => json(await provider.listLabels(ctx.resolveRepo(repo)))
+    async ({ repo }) => json(await metadata.listLabels(ctx.resolveRepo(repo)))
   );
 
   server.tool(
@@ -19,6 +19,6 @@ export function registerMetadataTools(server: McpServer, provider: TrackerProvid
       repo: REPO_PARAM,
       state: z.enum(["open", "closed", "all"]).optional().describe("Defaults to open"),
     },
-    async ({ repo, state }) => json(await provider.listMilestones(ctx.resolveRepo(repo), state))
+    async ({ repo, state }) => json(await metadata.listMilestones(ctx.resolveRepo(repo), state))
   );
 }

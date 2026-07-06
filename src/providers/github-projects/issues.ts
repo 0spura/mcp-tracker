@@ -1,6 +1,6 @@
-import type { TrackerRepo, Issue, CreateIssueOptions, UpdateIssueOptions } from "../types.js";
-import type { ListIssuesOptions } from "../provider.js";
-import { gh, graphql, repoFlag, mapIssue, type RawIssue } from "./helpers.js";
+import type { TrackerRepo, Issue, CreateIssueOptions, UpdateIssueOptions } from "../../interfaces/types.js";
+import type { ListIssuesOptions } from "../../interfaces/issue.js";
+import { gh, graphql, repoFlag, mapIssue, type RawIssue } from "../github/helpers.js";
 
 export async function listIssues(repo: TrackerRepo, opts?: ListIssuesOptions): Promise<Issue[]> {
   const args = [

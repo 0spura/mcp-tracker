@@ -1,21 +1,15 @@
-import type { TrackerRepo } from "../types.js";
-import { gh, repoFlag } from "./helpers.js";
+import type { TrackerRepo } from "../../interfaces/types.js";
+import { gh, repoFlag } from "../github/helpers.js";
 import { getIssue, updateIssue } from "./issues.js";
 
 export async function addIssueComment(repo: TrackerRepo, number: number, body: string): Promise<void> {
   gh<unknown>(["issue", "comment", String(number), "--repo", repoFlag(repo), "--body", body]);
 }
 
-export async function addPRComment(repo: TrackerRepo, number: number, body: string): Promise<void> {
-  gh<unknown>(["pr", "comment", String(number), "--repo", repoFlag(repo), "--body", body]);
-}
-
-export async function listComments(
+export async function listIssueComments(
   repo: TrackerRepo,
-  _type: "issue" | "pr",
   number: number
 ): Promise<Array<{ id: number; author: string; body: string; createdAt: string }>> {
-  // GitHub uses the issues endpoint for both issues and PRs
   const raw = gh<Array<{ id: number; user: { login: string }; body: string; created_at: string }>>(
     ["api", `repos/${repoFlag(repo)}/issues/${number}/comments`]
   );

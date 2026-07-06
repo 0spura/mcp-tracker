@@ -1,5 +1,5 @@
 import { execFileSync } from "child_process";
-import type { TrackerRepo, Issue, PR } from "../types.js";
+import type { TrackerRepo, Issue, PR } from "../../interfaces/types.js";
 
 export function gh<T>(args: string[], inputData?: unknown): T {
   const hasInput = inputData !== undefined;

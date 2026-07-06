@@ -1,33 +1,65 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { GitHubCodeProvider } from "./providers/github/index.js";
+import { GitHubTaskProvider } from "./providers/github-projects/index.js";
+import { GitLabCodeProvider } from "./providers/gitlab/index.js";
+import { GitLabTaskProvider } from "./providers/gitlab-boards/index.js";
+import { LocalTaskProvider } from "./providers/local/index.js";
+import type { CodeProvider } from "./interfaces/code.js";
+import type { IssueProvider } from "./interfaces/issue.js";
+import type { BoardProvider } from "./interfaces/board.js";
+import type { MetadataProvider } from "./interfaces/metadata.js";
 import { ContextStore } from "./context.js";
-import { GitHubProvider } from "./github/index.js";
-import type { TrackerProvider } from "./provider.js";
 import { registerContextTools } from "./tools/context.js";
-import { registerIssueTools } from "./tools/issues.js";
 import { registerBranchTools } from "./tools/branches.js";
 import { registerPRTools } from "./tools/prs.js";
+import { registerIssueTools } from "./tools/issues.js";
 import { registerCommentTools } from "./tools/comments.js";
-import { registerBoardTools } from "./tools/board.js";
+import { registerBoardTools } from "./tools/boards.js";
 import { registerMetadataTools } from "./tools/metadata.js";
 
-function resolveProvider(): TrackerProvider {
-  const name = process.env.TRACKER_PROVIDER ?? "github";
-  if (name === "github") return new GitHubProvider();
-  throw new Error(`Unknown TRACKER_PROVIDER "${name}". Supported: github`);
+function isBoardProvider(p: unknown): p is BoardProvider {
+  return typeof p === "object" && p !== null && "listBoardItems" in p;
+}
+
+function isMetadataProvider(p: unknown): p is MetadataProvider {
+  return typeof p === "object" && p !== null && "listLabels" in p;
+}
+
+function resolveCode(name: string): CodeProvider {
+  if (name === "github") return new GitHubCodeProvider();
+  if (name === "gitlab") return new GitLabCodeProvider();
+  throw new Error(`Unknown CODE_PROVIDER "${name}". Valid values: github, gitlab`);
+}
+
+function resolveTask(name: string): IssueProvider {
+  if (name === "github-projects") return new GitHubTaskProvider();
+  if (name === "gitlab-boards") return new GitLabTaskProvider();
+  if (name === "local") return new LocalTaskProvider();
+  throw new Error(`Unknown TASK_PROVIDER "${name}". Valid values: github-projects, gitlab-boards, local`);
 }
 
 export function createServer(): McpServer {
-  const provider = resolveProvider();
+  const codeName = process.env.CODE_PROVIDER ?? process.env.TRACKER_PROVIDER ?? "github";
+  const taskName = process.env.TASK_PROVIDER;
+
+  const code = resolveCode(codeName);
+  const task = taskName ? resolveTask(taskName) : null;
+  const board = task && isBoardProvider(task) ? task : null;
+  const metadata = task && isMetadataProvider(task) ? task : null;
+
   const ctx = new ContextStore();
   const server = new McpServer({ name: "tracker", version: "1.0.0" });
 
   registerContextTools(server, ctx);
-  registerIssueTools(server, provider, ctx);
-  registerBranchTools(server, provider, ctx);
-  registerPRTools(server, provider, ctx);
-  registerCommentTools(server, provider, ctx);
-  registerBoardTools(server, provider, ctx);
-  registerMetadataTools(server, provider, ctx);
+  registerBranchTools(server, code, ctx);
+  registerPRTools(server, code, ctx);
+
+  if (task) {
+    registerIssueTools(server, task, board, ctx);
+    registerCommentTools(server, code, task, ctx);
+  }
+  if (board) registerBoardTools(server, board, ctx);
+  if (metadata) registerMetadataTools(server, metadata, ctx);
 
   return server;
 }

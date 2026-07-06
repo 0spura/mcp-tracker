@@ -1,21 +1,23 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ContextStore } from "../context.js";
-import type { TrackerProvider } from "../provider.js";
+import type { CodeProvider } from "../interfaces/code.js";
+import type { IssueProvider } from "../interfaces/issue.js";
 import { REPO_PARAM, json, text } from "./helpers.js";
 
-export function registerCommentTools(server: McpServer, provider: TrackerProvider, ctx: ContextStore): void {
+export function registerCommentTools(server: McpServer, code: CodeProvider, issue: IssueProvider, ctx: ContextStore): void {
   server.tool(
     "add_issue_comment",
-    "Add a comment to an issue",
+    "Add a comment to an issue. Uses active_issue from context when number is omitted.",
     {
       repo: REPO_PARAM,
-      number: z.number().int().positive(),
+      number: z.number().int().positive().optional().describe("Defaults to active_issue from context"),
       body: z.string(),
     },
     async ({ repo, number, body }) => {
-      await provider.addIssueComment(ctx.resolveRepo(repo), number, body);
-      return text(`Comment added to issue #${number}`);
+      const n = ctx.resolveIssue(number);
+      await issue.addIssueComment(ctx.resolveRepo(repo), n, body);
+      return text(`Comment added to issue #${n}`);
     }
   );
 
@@ -28,20 +30,26 @@ export function registerCommentTools(server: McpServer, provider: TrackerProvide
       body: z.string(),
     },
     async ({ repo, number, body }) => {
-      await provider.addPRComment(ctx.resolveRepo(repo), number, body);
+      await code.addPRComment(ctx.resolveRepo(repo), number, body);
       return text(`Comment added to PR #${number}`);
     }
   );
 
   server.tool(
     "list_comments",
-    "List comments on an issue or pull request",
+    "List comments on an issue or pull request. For issues, uses active_issue from context when number is omitted.",
     {
       repo: REPO_PARAM,
       type: z.enum(["issue", "pr"]).describe("Whether the number refers to an issue or a PR"),
-      number: z.number().int().positive(),
+      number: z.number().int().positive().optional().describe("Defaults to active_issue from context when type is 'issue'"),
     },
-    async ({ repo, type, number }) =>
-      json(await provider.listComments(ctx.resolveRepo(repo), type, number))
+    async ({ repo, type, number }) => {
+      const resolvedRepo = ctx.resolveRepo(repo);
+      if (type === "issue") {
+        return json(await issue.listIssueComments(resolvedRepo, ctx.resolveIssue(number)));
+      }
+      if (!number) throw new Error("number is required for PR comments");
+      return json(await code.listPRComments(resolvedRepo, number));
+    }
   );
 }

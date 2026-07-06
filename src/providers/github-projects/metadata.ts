@@ -1,5 +1,5 @@
-import type { TrackerRepo, Label, Milestone, RelationshipType } from "../types.js";
-import { gh, graphql, repoFlag } from "./helpers.js";
+import type { TrackerRepo, Label, Milestone, RelationshipType } from "../../interfaces/types.js";
+import { gh, graphql, repoFlag } from "../github/helpers.js";
 
 const RELATIONSHIP_TYPE_MAP: Record<RelationshipType, string> = {
   blocks: "BLOCKS",

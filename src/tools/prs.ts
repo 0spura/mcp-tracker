@@ -1,10 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ContextStore } from "../context.js";
-import type { TrackerProvider } from "../provider.js";
+import type { CodeProvider } from "../interfaces/code.js";
 import { REPO_PARAM, json, text } from "./helpers.js";
 
-export function registerPRTools(server: McpServer, provider: TrackerProvider, ctx: ContextStore): void {
+export function registerPRTools(server: McpServer, code: CodeProvider, ctx: ContextStore): void {
   server.tool(
     "create_pr",
     "Create a pull request. Uses default_base and default_reviewers from context when set.",
@@ -19,11 +19,11 @@ export function registerPRTools(server: McpServer, provider: TrackerProvider, ct
     async ({ repo, title, body, head, base, reviewers }) => {
       const resolvedRepo = ctx.resolveRepo(repo);
       const resolvedBase = base ?? ctx.defaultBase ?? undefined;
-      const pr = await provider.createPR(resolvedRepo, title, body, head, resolvedBase);
+      const pr = await code.createPR(resolvedRepo, title, body, head, resolvedBase);
 
       const allReviewers = [...new Set([...(ctx.defaultReviewers ?? []), ...(reviewers ?? [])])];
       if (allReviewers.length > 0) {
-        await provider.requestReviewers(resolvedRepo, pr.number, allReviewers);
+        await code.requestReviewers(resolvedRepo, pr.number, allReviewers);
       }
 
       return json(pr);
@@ -40,7 +40,7 @@ export function registerPRTools(server: McpServer, provider: TrackerProvider, ct
       body: z.string().optional(),
     },
     async ({ repo, number, title, body }) =>
-      json(await provider.updatePR(ctx.resolveRepo(repo), number, { title, body }))
+      json(await code.updatePR(ctx.resolveRepo(repo), number, { title, body }))
   );
 
   server.tool(
@@ -50,7 +50,7 @@ export function registerPRTools(server: McpServer, provider: TrackerProvider, ct
       repo: REPO_PARAM,
       number: z.number().int().positive(),
     },
-    async ({ repo, number }) => json(await provider.getPR(ctx.resolveRepo(repo), number))
+    async ({ repo, number }) => json(await code.getPR(ctx.resolveRepo(repo), number))
   );
 
   server.tool(
@@ -62,7 +62,7 @@ export function registerPRTools(server: McpServer, provider: TrackerProvider, ct
       limit: z.number().int().positive().optional().describe("Max results, defaults to 50"),
     },
     async ({ repo, state, limit }) =>
-      json(await provider.listPRs(ctx.resolveRepo(repo), { state, limit }))
+      json(await code.listPRs(ctx.resolveRepo(repo), { state, limit }))
   );
 
   server.tool(
@@ -72,7 +72,7 @@ export function registerPRTools(server: McpServer, provider: TrackerProvider, ct
       repo: REPO_PARAM,
       number: z.number().int().positive(),
     },
-    async ({ repo, number }) => json(await provider.getPRChecks(ctx.resolveRepo(repo), number))
+    async ({ repo, number }) => json(await code.getPRChecks(ctx.resolveRepo(repo), number))
   );
 
   server.tool(
@@ -85,7 +85,7 @@ export function registerPRTools(server: McpServer, provider: TrackerProvider, ct
     },
     async ({ repo, number, method }) => {
       const resolvedMethod = method ?? ctx.defaultMergeMethod ?? "squash";
-      await provider.mergePR(ctx.resolveRepo(repo), number, resolvedMethod);
+      await code.mergePR(ctx.resolveRepo(repo), number, resolvedMethod);
       return text(`PR #${number} merged via ${resolvedMethod}`);
     }
   );

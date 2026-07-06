@@ -1,10 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ContextStore } from "../context.js";
-import type { TrackerProvider } from "../provider.js";
+import type { BoardProvider } from "../interfaces/board.js";
 import { REPO_PARAM, json, text } from "./helpers.js";
 
-export function registerBoardTools(server: McpServer, provider: TrackerProvider, ctx: ContextStore): void {
+export function registerBoardTools(server: McpServer, board: BoardProvider, ctx: ContextStore): void {
   server.tool(
     "list_board_items",
     "List all items on the board/project",
@@ -15,7 +15,7 @@ export function registerBoardTools(server: McpServer, provider: TrackerProvider,
     async ({ repo, board_id }) => {
       const id = board_id ?? ctx.boardId;
       if (!id) throw new Error("board_id is required. Set it via tracker_set_context or pass it explicitly.");
-      return json(await provider.listBoardItems(ctx.resolveRepo(repo), id));
+      return json(await board.listBoardItems(ctx.resolveRepo(repo), id));
     }
   );
 
@@ -29,7 +29,7 @@ export function registerBoardTools(server: McpServer, provider: TrackerProvider,
     async ({ repo, board_id }) => {
       const id = board_id ?? ctx.boardId;
       if (!id) throw new Error("board_id is required. Set it via tracker_set_context or pass it explicitly.");
-      return json(await provider.listBoardFields(ctx.resolveRepo(repo), id));
+      return json(await board.listBoardFields(ctx.resolveRepo(repo), id));
     }
   );
 
@@ -44,7 +44,7 @@ export function registerBoardTools(server: McpServer, provider: TrackerProvider,
     async ({ repo, issue_number, board_id }) => {
       const id = board_id ?? ctx.boardId;
       if (!id) throw new Error("board_id is required. Set it via tracker_set_context or pass it explicitly.");
-      const itemId = await provider.addIssueToBoard(ctx.resolveRepo(repo), issue_number, id);
+      const itemId = await board.addIssueToBoard(ctx.resolveRepo(repo), issue_number, id);
       return json({ item_id: itemId });
     }
   );
@@ -61,7 +61,7 @@ export function registerBoardTools(server: McpServer, provider: TrackerProvider,
     async ({ repo, board_id, item_id, fields }) => {
       const id = board_id ?? ctx.boardId;
       if (!id) throw new Error("board_id is required. Set it via tracker_set_context or pass it explicitly.");
-      await provider.setItemFields(ctx.resolveRepo(repo), id, item_id, fields);
+      await board.setItemFields(ctx.resolveRepo(repo), id, item_id, fields);
       return text(`Fields updated: ${Object.entries(fields).map(([k, v]) => `${k}=${v}`).join(", ")}`);
     }
   );

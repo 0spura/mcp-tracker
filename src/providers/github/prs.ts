@@ -1,4 +1,4 @@
-import type { TrackerRepo, PR, CheckRun } from "../types.js";
+import type { TrackerRepo, PR, CheckRun } from "../../interfaces/types.js";
 import { gh, repoFlag, mapPR, type RawPR, type RawCheckRun } from "./helpers.js";
 
 export async function createPR(
