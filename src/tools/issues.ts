@@ -59,10 +59,10 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
 
   server.tool(
     "get_issue",
-    "Get issue details. Uses active_issue from context when issue_number is omitted.",
+    "Get issue details. Targets the active issue (current branch, or a set_context override) when issue_number is omitted.",
     {
       repo: REPO_PARAM,
-      issue_number: z.number().int().positive().optional().describe("Defaults to active_issue from context"),
+      issue_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
     },
     async ({ repo, issue_number }) =>
       json(await issue.getIssue(ctx.resolveRepo(repo), ctx.resolveIssue(issue_number)))
@@ -73,7 +73,7 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
     "Update an issue — title, body, labels, assignees, or state",
     {
       repo: REPO_PARAM,
-      issue_number: z.number().int().positive().optional().describe("Defaults to active_issue from context"),
+      issue_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
       title: z.string().optional(),
       body: z.string().optional(),
       labels: z.array(z.string()).optional(),
@@ -86,10 +86,10 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
 
   server.tool(
     "move_issue_status",
-    "Move an issue to a status column on the board. Uses active_issue from context when issue_number is omitted.",
+    "Move an issue to a status column on the board. Targets the active issue (current branch, or a set_context override) when issue_number is omitted.",
     {
       repo: REPO_PARAM,
-      issue_number: z.number().int().positive().optional().describe("Defaults to active_issue from context"),
+      issue_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
       status: z.string().describe("Status column name, e.g. 'In Progress', 'In Review', 'Done'"),
     },
     async ({ repo, issue_number, status }) => {
@@ -102,10 +102,10 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
   if (issue.toggleChecklistItem) {
     server.tool(
       "toggle_checklist_item",
-      "Mark or unmark a checklist item in an issue body. Uses active_issue from context when issue_number is omitted.",
+      "Mark or unmark a checklist item in an issue body. Targets the active issue (current branch, or a set_context override) when issue_number is omitted.",
       {
         repo: REPO_PARAM,
-        issue_number: z.number().int().positive().optional().describe("Defaults to active_issue from context"),
+        issue_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
         item_text: z.string().describe("Partial or full text of the checklist item to toggle"),
         checked: z.boolean().optional().describe("Force to checked (true) or unchecked (false). Omit to toggle."),
       },
@@ -122,7 +122,7 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
       "Add a child (sub) issue to a parent issue",
       {
         repo: REPO_PARAM,
-        parent_number: z.number().int().positive().optional().describe("Defaults to active_issue from context"),
+        parent_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
         child_number: z.number().int().positive(),
       },
       async ({ repo, parent_number, child_number }) => {
@@ -136,10 +136,10 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
   if (issue.listSubIssues) {
     server.tool(
       "list_sub_issues",
-      "List sub-issues of a parent issue. Uses active_issue from context when issue_number is omitted.",
+      "List sub-issues of a parent issue. Targets the active issue (current branch, or a set_context override) when issue_number is omitted.",
       {
         repo: REPO_PARAM,
-        issue_number: z.number().int().positive().optional().describe("Defaults to active_issue from context"),
+        issue_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
       },
       async ({ repo, issue_number }) =>
         json(await issue.listSubIssues!(ctx.resolveRepo(repo), ctx.resolveIssue(issue_number)))
@@ -149,10 +149,10 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
   if (issue.setRelationship) {
     server.tool(
       "set_issue_relationship",
-      "Set a relationship between two issues. Uses active_issue from context as source when issue_number is omitted.",
+      "Set a relationship between two issues. The source defaults to the active issue (current branch, or a set_context override) when issue_number is omitted.",
       {
         repo: REPO_PARAM,
-        issue_number: z.number().int().positive().optional().describe("Defaults to active_issue from context"),
+        issue_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
         type: z.enum(["blocks", "blocked_by", "related", "duplicate"]),
         target_number: z.number().int().positive(),
       },

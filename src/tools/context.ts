@@ -6,11 +6,11 @@ import { json } from "./helpers.js";
 export function registerContextTools(server: McpServer, ctx: ContextStore): void {
   server.tool(
     "tracker_set_context",
-    "Set project context so you don't have to repeat repo/project in every call. Detected automatically from git remote when omitted.",
+    "Override auto-resolved context. Usually unnecessary: repo comes from the git remote, the active issue from the current branch (<type>/<issue>-<slug>), and defaults from .mcp-tracker.json. Use this only to target a repo or issue that differs from the current git state.",
     {
-      repo: z.string().optional().describe("Repository as owner/repo"),
-      board_id: z.string().optional().describe("Board, project, or cycle identifier. Used to add issues automatically and resolve status fields. For GitHub this is the Projects V2 number as a string."),
-      active_issue: z.number().int().positive().nullable().optional().describe("Issue currently being worked on. When set, issue tools (get_issue, move_issue_status, toggle_checklist_item, add_issue_comment) use it by default — no need to pass issue_number on every call. Pass null to clear."),
+      repo: z.string().optional().describe("Repository as owner/repo. Override the git remote."),
+      board_id: z.string().optional().describe("Board, project, or cycle identifier. Overrides .mcp-tracker.json. For GitHub this is the Projects V2 number as a string."),
+      active_issue: z.number().int().positive().nullable().optional().describe("Issue to target explicitly, overriding the one derived from the current branch. Pass null to clear and fall back to branch derivation."),
       default_assignee: z.string().optional().describe("Username to assign by default"),
       default_base: z.string().optional().describe("Default base branch for PRs, e.g. dev or main"),
       default_merge_method: z.enum(["merge", "squash", "rebase"]).optional().describe("Default merge method"),
@@ -34,7 +34,7 @@ export function registerContextTools(server: McpServer, ctx: ContextStore): void
 
   server.tool(
     "tracker_get_context",
-    "Inspect the current context (repo, board, active issue, defaults). Context is set automatically from git remote and persists for the session — only call this to debug or confirm what is set.",
+    "Inspect the effective context (repo, active issue, board, defaults) and where each value came from — session override, .mcp-tracker.json, or git. Only needed to debug or confirm what is resolved; tools resolve context on their own.",
     {},
     async () => json(ctx.snapshot())
   );

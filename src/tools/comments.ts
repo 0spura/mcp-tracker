@@ -8,10 +8,10 @@ import { REPO_PARAM, json, text } from "./helpers.js";
 export function registerCommentTools(server: McpServer, code: CodeProvider, issue: IssueProvider, ctx: ContextStore): void {
   server.tool(
     "add_issue_comment",
-    "Add a comment to an issue. Uses active_issue from context when number is omitted.",
+    "Add a comment to an issue. Targets the active issue (from the current branch, or a set_context override) when number is omitted.",
     {
       repo: REPO_PARAM,
-      number: z.number().int().positive().optional().describe("Defaults to active_issue from context"),
+      number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
       body: z.string(),
     },
     async ({ repo, number, body }) => {
@@ -37,11 +37,11 @@ export function registerCommentTools(server: McpServer, code: CodeProvider, issu
 
   server.tool(
     "list_comments",
-    "List comments on an issue or pull request. For issues, uses active_issue from context when number is omitted.",
+    "List comments on an issue or pull request. For issues, targets the active issue (current branch, or a set_context override) when number is omitted.",
     {
       repo: REPO_PARAM,
       type: z.enum(["issue", "pr"]).describe("Whether the number refers to an issue or a PR"),
-      number: z.number().int().positive().optional().describe("Defaults to active_issue from context when type is 'issue'"),
+      number: z.number().int().positive().optional().describe("For issues, defaults to the active issue derived from the current branch"),
     },
     async ({ repo, type, number }) => {
       const resolvedRepo = ctx.resolveRepo(repo);
