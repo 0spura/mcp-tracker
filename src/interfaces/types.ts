@@ -27,6 +27,8 @@ export interface CheckRun {
   status: string;
   conclusion: string | null;
   url: string;
+  // Populated only for failed checks: the tail of the failing job's log.
+  logs?: string | null;
 }
 
 export type RelationshipType = "blocks" | "blocked_by" | "related" | "duplicate";

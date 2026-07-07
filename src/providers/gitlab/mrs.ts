@@ -1,5 +1,5 @@
 import type { TrackerRepo, PR, CheckRun } from "../../interfaces/types.js";
-import { glab, glabApi, projectRef, repoFlag, type RawGitLabMR, type RawGitLabNote } from "./helpers.js";
+import { glab, glabApi, glabRaw, projectRef, repoFlag, type RawGitLabMR, type RawGitLabNote } from "./helpers.js";
 
 function mapMR(mr: RawGitLabMR): PR {
   return {
@@ -59,13 +59,30 @@ export async function getPRChecks(repo: TrackerRepo, number: number): Promise<Ch
   if (!pipelines.length) return [];
   // Get jobs from the latest pipeline
   const latest = pipelines[0];
-  const jobs = glabApi<Array<{ name: string; status: string; web_url: string }>>(`projects/${ref}/pipelines/${latest.id}/jobs`);
-  return jobs.map((j) => ({
-    name: j.name,
-    status: j.status === "running" ? "in_progress" : j.status === "pending" ? "queued" : "completed",
-    conclusion: j.status === "success" ? "success" : j.status === "failed" ? "failure" : null,
-    url: j.web_url,
-  }));
+  const jobs = glabApi<Array<{ id: number; name: string; status: string; web_url: string }>>(`projects/${ref}/pipelines/${latest.id}/jobs`);
+  return jobs.map((j) => {
+    const run: CheckRun = {
+      name: j.name,
+      status: j.status === "running" ? "in_progress" : j.status === "pending" ? "queued" : "completed",
+      conclusion: j.status === "success" ? "success" : j.status === "failed" ? "failure" : null,
+      url: j.web_url,
+    };
+    if (j.status === "failed") {
+      const log = tailLog(glabRaw(["api", `projects/${ref}/jobs/${j.id}/trace`]));
+      if (log) run.logs = log;
+    }
+    return run;
+  });
+}
+
+// Keeps the last lines of a job trace within a bounded size so it stays useful
+// in context without dumping a multi-megabyte CI log.
+function tailLog(raw: string): string {
+  const text = raw.trim();
+  if (!text) return "";
+  const tail = text.split("\n").slice(-200).join("\n");
+  const MAX = 12000;
+  return tail.length > MAX ? `... (truncated)\n${tail.slice(-MAX)}` : tail;
 }
 
 export async function requestReviewers(repo: TrackerRepo, prNumber: number, reviewers: string[]): Promise<void> {

@@ -17,6 +17,17 @@ export function gh<T>(args: string[], inputData?: unknown): T {
   }
 }
 
+// Runs gh for plain-text output (e.g. logs). Best-effort: some log commands
+// exit non-zero while still writing the log to stdout, so we return that.
+export function ghRaw(args: string[]): string {
+  try {
+    return execFileSync("gh", args, { encoding: "utf8", stdio: ["inherit", "pipe", "pipe"] });
+  } catch (err: unknown) {
+    const e = err as { stdout?: Buffer | string };
+    return e.stdout?.toString() ?? "";
+  }
+}
+
 export function graphql<T>(query: string, variables: Record<string, unknown> = {}): T {
   type GQLResponse = { data: T; errors?: Array<{ message: string }> };
   const res = gh<GQLResponse>(["api", "graphql", "--input", "-"], { query, variables });
@@ -53,6 +64,7 @@ export interface RawCheckRun {
   status: string;
   conclusion: string | null;
   html_url?: string;
+  details_url?: string;
 }
 
 export function mapIssue(d: RawIssue): Issue {

@@ -67,7 +67,7 @@ export function registerPRTools(server: McpServer, code: CodeProvider, ctx: Cont
 
   server.tool(
     "get_pr_checks",
-    "Get CI check results for a pull request",
+    "Get CI check results for a pull request. Failed checks include the tail of their failing job log inline.",
     {
       repo: REPO_PARAM,
       number: z.number().int().positive(),

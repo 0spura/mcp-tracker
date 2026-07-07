@@ -1,5 +1,5 @@
 import type { TrackerRepo, PR, CheckRun } from "../../interfaces/types.js";
-import { gh, repoFlag, mapPR, type RawPR, type RawCheckRun } from "./helpers.js";
+import { gh, ghRaw, repoFlag, mapPR, type RawPR, type RawCheckRun } from "./helpers.js";
 
 export async function createPR(
   repo: TrackerRepo,
@@ -39,12 +39,39 @@ export async function getPRChecks(repo: TrackerRepo, number: number): Promise<Ch
   const checks = gh<{ check_runs: RawCheckRun[] }>([
     "api", `repos/${repoFlag(repo)}/commits/${pr.headRefOid}/check-runs`,
   ]);
-  return checks.check_runs.map((r) => ({
-    name: r.name,
-    status: r.status,
-    conclusion: r.conclusion ?? null,
-    url: r.html_url ?? "",
-  }));
+  return checks.check_runs.map((r) => {
+    const run: CheckRun = {
+      name: r.name,
+      status: r.status,
+      conclusion: r.conclusion ?? null,
+      url: r.html_url ?? "",
+    };
+    if (r.conclusion === "failure" || r.conclusion === "timed_out") {
+      const logs = fetchFailedJobLog(repo, r);
+      if (logs) run.logs = logs;
+    }
+    return run;
+  });
+}
+
+// Fetches the failing steps' log for a check run. Only GitHub Actions checks
+// expose a job id (via /job/<id> in their URL); external checks return null.
+function fetchFailedJobLog(repo: TrackerRepo, r: RawCheckRun): string | null {
+  const jobId = `${r.details_url ?? ""} ${r.html_url ?? ""}`.match(/\/job\/(\d+)/)?.[1];
+  if (!jobId) return null;
+  const base = ["run", "view", "--repo", repoFlag(repo), "--job", jobId];
+  const log = tailLog(ghRaw([...base, "--log-failed"])) || tailLog(ghRaw([...base, "--log"]));
+  return log || null;
+}
+
+// Keeps the last lines of a log within a bounded size so it stays useful in
+// context without dumping a multi-megabyte CI log.
+function tailLog(raw: string): string {
+  const text = raw.trim();
+  if (!text) return "";
+  const tail = text.split("\n").slice(-200).join("\n");
+  const MAX = 12000;
+  return tail.length > MAX ? `... (truncated)\n${tail.slice(-MAX)}` : tail;
 }
 
 export async function listPRs(
