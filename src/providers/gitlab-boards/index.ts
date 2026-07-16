@@ -10,7 +10,7 @@ export class GitLabTaskProvider implements IssueProvider, MetadataProvider {
   createIssue(repo: TrackerRepo, title: string, body: string, opts?: CreateIssueOptions) { return createIssue(repo, title, body, opts); }
   getIssue(repo: TrackerRepo, number: number) { return getIssue(repo, number); }
   updateIssue(repo: TrackerRepo, number: number, opts: UpdateIssueOptions) { return updateIssue(repo, number, opts); }
-  setIssueStatus(repo: TrackerRepo, issueNumber: number, status: string) { return setIssueStatus(repo, issueNumber, status); }
+  setIssueStatus(repo: TrackerRepo, issueNumber: number, status: string, allStatusLabels?: string[]) { return setIssueStatus(repo, issueNumber, status, allStatusLabels); }
   addIssueComment(repo: TrackerRepo, number: number, body: string) { return addIssueComment(repo, number, body); }
   listIssueComments(repo: TrackerRepo, number: number) { return listIssueComments(repo, number); }
   // IssueProvider — optional sub-capabilities

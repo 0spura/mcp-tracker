@@ -12,7 +12,7 @@ export interface IssueProvider {
   createIssue(repo: TrackerRepo, title: string, body: string, opts?: CreateIssueOptions): Promise<Issue>;
   getIssue(repo: TrackerRepo, number: number): Promise<Issue>;
   updateIssue(repo: TrackerRepo, number: number, opts: UpdateIssueOptions): Promise<Issue>;
-  setIssueStatus(repo: TrackerRepo, issueNumber: number, status: string): Promise<void>;
+  setIssueStatus(repo: TrackerRepo, issueNumber: number, status: string, allStatusLabels?: string[]): Promise<void>;
   addIssueComment(repo: TrackerRepo, number: number, body: string): Promise<void>;
   listIssueComments(repo: TrackerRepo, number: number): Promise<Array<{ id: number; author: string; body: string; createdAt: string }>>;
   // Optional sub-capabilities — not all providers support these

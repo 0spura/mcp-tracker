@@ -63,11 +63,12 @@ export async function updateIssue(repo: TrackerRepo, number: number, opts: Updat
 }
 
 // Status labels are mutually exclusive — setting one removes the others.
-const STATUS_LABELS = ["⌛ todo", "🏃 doing", "✌ done", "🥺 waiting"];
+const DEFAULT_STATUS_LABELS = ["⌛ todo", "🏃 doing", "✌ done", "🥺 waiting"];
 
-export async function setIssueStatus(repo: TrackerRepo, issueNumber: number, status: string): Promise<void> {
+export async function setIssueStatus(repo: TrackerRepo, issueNumber: number, status: string, allStatusLabels?: string[]): Promise<void> {
   const ref = projectRef(repo);
-  const toRemove = STATUS_LABELS.filter((l) => l !== status);
+  const all = allStatusLabels?.length ? allStatusLabels : DEFAULT_STATUS_LABELS;
+  const toRemove = all.filter((l) => l !== status);
   const fields = ["--raw-field", `add_labels=${status}`];
   if (toRemove.length) fields.push("--raw-field", `remove_labels=${toRemove.join(",")}`);
   glabApi<unknown>(`projects/${ref}/issues/${issueNumber}`, "PUT", fields);

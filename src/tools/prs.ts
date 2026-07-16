@@ -104,7 +104,9 @@ export function registerPRTools(server: McpServer, code: CodeProvider, ctx: Cont
       const issueMatch = pr.headBranch.match(/(?:^|\/)(\d+)(?:-|$)/);
       if (issueMatch && issue) {
         try {
-          await issue.setIssueStatus(resolvedRepo, parseInt(issueMatch[1], 10), "✌ done");
+          const doneLabel = ctx.statusLabels["Done"] ?? "✌ done";
+          const allLabels = Object.values(ctx.statusLabels);
+          await issue.setIssueStatus(resolvedRepo, parseInt(issueMatch[1], 10), doneLabel, allLabels.length ? allLabels : undefined);
         } catch {
           // best-effort: don't fail the merge if status move fails
         }

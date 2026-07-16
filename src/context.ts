@@ -26,6 +26,7 @@ interface TrackerConfig {
   defaultMilestone?: string;
   defaultLabels?: string[];
   typeLabels?: Record<string, string>;
+  statusLabels?: Record<string, string>;
 }
 
 const CONFIG_FILE = ".mcp-tracker.json";
@@ -105,6 +106,7 @@ export class ContextStore {
   get defaultMilestone(): string | null { return this.session.defaultMilestone ?? this.config().defaultMilestone ?? null; }
   get defaultLabels(): string[] { return this.config().defaultLabels ?? []; }
   get typeLabels(): Record<string, string> { return this.config().typeLabels ?? {}; }
+  get statusLabels(): Record<string, string> { return this.config().statusLabels ?? {}; }
 
   snapshot() {
     let repo: TrackerRepo | null = null;
@@ -130,6 +132,7 @@ export class ContextStore {
       defaultMilestone: this.defaultMilestone,
       defaultLabels: this.defaultLabels,
       typeLabels: this.typeLabels,
+      statusLabels: this.statusLabels,
       configFile: this.configPath(),
     };
   }

@@ -95,7 +95,9 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
     },
     async ({ repo, issue_number, status }) => {
       const n = ctx.resolveIssue(issue_number);
-      await issue.setIssueStatus(ctx.resolveRepo(repo), n, status);
+      const resolvedStatus = ctx.statusLabels[status] ?? status;
+      const allLabels = Object.values(ctx.statusLabels);
+      await issue.setIssueStatus(ctx.resolveRepo(repo), n, resolvedStatus, allLabels.length ? allLabels : undefined);
       return text(`Issue #${n} moved to "${status}"`);
     }
   );
