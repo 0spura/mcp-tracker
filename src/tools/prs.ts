@@ -2,9 +2,10 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ContextStore } from "../context.js";
 import type { CodeProvider } from "../interfaces/code.js";
+import type { IssueProvider } from "../interfaces/issue.js";
 import { REPO_PARAM, json, text } from "./helpers.js";
 
-export function registerPRTools(server: McpServer, code: CodeProvider, ctx: ContextStore): void {
+export function registerPRTools(server: McpServer, code: CodeProvider, ctx: ContextStore, issue?: IssueProvider): void {
   server.tool(
     "create_pr",
     "Create a pull request. Uses default_base and default_reviewers from context when set.",
@@ -19,7 +20,15 @@ export function registerPRTools(server: McpServer, code: CodeProvider, ctx: Cont
     async ({ repo, title, body, head, base, reviewers }) => {
       const resolvedRepo = ctx.resolveRepo(repo);
       const resolvedBase = base ?? ctx.defaultBase ?? undefined;
-      const pr = await code.createPR(resolvedRepo, title, body, head, resolvedBase);
+
+      // Auto-link: reference the issue in MR body when derivable from branch
+      let resolvedBody = body;
+      const issueMatch = head.match(/(?:^|\/)(\d+)(?:-|$)/);
+      if (issueMatch && !body.includes(`#${issueMatch[1]}`)) {
+        resolvedBody = `${body}\n\nRelates to #${issueMatch[1]}`;
+      }
+
+      const pr = await code.createPR(resolvedRepo, title, resolvedBody, head, resolvedBase);
 
       const allReviewers = [...new Set([...(ctx.defaultReviewers ?? []), ...(reviewers ?? [])])];
       if (allReviewers.length > 0) {
@@ -85,7 +94,22 @@ export function registerPRTools(server: McpServer, code: CodeProvider, ctx: Cont
     },
     async ({ repo, number, method }) => {
       const resolvedMethod = method ?? ctx.defaultMergeMethod ?? "squash";
-      await code.mergePR(ctx.resolveRepo(repo), number, resolvedMethod);
+      const resolvedRepo = ctx.resolveRepo(repo);
+
+      // Get the MR's source branch to derive issue number before merging
+      const pr = await code.getPR(resolvedRepo, number);
+      await code.mergePR(resolvedRepo, number, resolvedMethod);
+
+      // Auto-move issue to done when derivable from branch
+      const issueMatch = pr.headBranch.match(/(?:^|\/)(\d+)(?:-|$)/);
+      if (issueMatch && issue) {
+        try {
+          await issue.setIssueStatus(resolvedRepo, parseInt(issueMatch[1], 10), "✌ done");
+        } catch {
+          // best-effort: don't fail the merge if status move fails
+        }
+      }
+
       return text(`PR #${number} merged via ${resolvedMethod}`);
     }
   );

@@ -10,8 +10,10 @@ export async function listLabels(repo: TrackerRepo): Promise<Label[]> {
 
 export async function listMilestones(repo: TrackerRepo, state?: "open" | "closed" | "all"): Promise<Milestone[]> {
   const ref = projectRef(repo);
+  const params = new URLSearchParams({ include_ancestors: "true" });
+  if (state) params.set("state", state);
   const raw = glabApi<Array<{ id: number; title: string; state: string; due_date: string | null }>>(
-    `projects/${ref}/milestones${state ? `?state=${state}` : ""}`
+    `projects/${ref}/milestones?${params}`
   );
   return raw.map((m) => ({ number: m.id, title: m.title, state: m.state, dueOn: m.due_date }));
 }

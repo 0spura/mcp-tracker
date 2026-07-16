@@ -52,7 +52,7 @@ export function createServer(): McpServer {
 
   registerContextTools(server, ctx);
   registerBranchTools(server, code, ctx);
-  registerPRTools(server, code, ctx);
+  registerPRTools(server, code, ctx, task ?? undefined);
 
   if (task) {
     registerIssueTools(server, task, board, ctx);

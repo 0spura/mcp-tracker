@@ -1,7 +1,7 @@
 import type { IssueProvider, ListIssuesOptions } from "../../interfaces/issue.js";
 import type { MetadataProvider } from "../../interfaces/metadata.js";
 import type { TrackerRepo, Issue, Label, Milestone, RelationshipType, CreateIssueOptions, UpdateIssueOptions } from "../../interfaces/types.js";
-import { listIssues, createIssue, getIssue, updateIssue, setIssueStatus, addIssueComment, listIssueComments, toggleChecklistItem, setRelationship } from "./issues.js";
+import { listIssues, createIssue, getIssue, updateIssue, setIssueStatus, addIssueComment, listIssueComments, toggleChecklistItem, setRelationship, addSubIssue } from "./issues.js";
 import { listLabels, listMilestones } from "./metadata.js";
 
 export class GitLabTaskProvider implements IssueProvider, MetadataProvider {
@@ -14,6 +14,7 @@ export class GitLabTaskProvider implements IssueProvider, MetadataProvider {
   addIssueComment(repo: TrackerRepo, number: number, body: string) { return addIssueComment(repo, number, body); }
   listIssueComments(repo: TrackerRepo, number: number) { return listIssueComments(repo, number); }
   // IssueProvider — optional sub-capabilities
+  addSubIssue(repo: TrackerRepo, parentNumber: number, childNumber: number) { return addSubIssue(repo, parentNumber, childNumber); }
   toggleChecklistItem(repo: TrackerRepo, issueNumber: number, itemText: string, checked?: boolean) { return toggleChecklistItem(repo, issueNumber, itemText, checked); }
   setRelationship(repo: TrackerRepo, issueNumber: number, type: RelationshipType, targetNumber: number) { return setRelationship(repo, issueNumber, type, targetNumber); }
   // MetadataProvider

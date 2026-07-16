@@ -33,7 +33,19 @@ export async function createIssue(repo: TrackerRepo, title: string, body: string
     "--raw-field", `description=${body}`,
   ];
   if (opts?.labels?.length) fields.push("--raw-field", `labels=${opts.labels.join(",")}`);
+  if (opts?.assignees?.length) fields.push("--raw-field", `assignee_ids=${opts.assignees.join(",")}`);
+  if (opts?.milestone) {
+    const milestoneId = resolveMilestoneId(ref, opts.milestone);
+    if (milestoneId) fields.push("--raw-field", `milestone_id=${milestoneId}`);
+  }
   return mapIssue(glabApi<RawGitLabIssue>(`projects/${ref}/issues`, "POST", fields));
+}
+
+function resolveMilestoneId(projectRef: string, milestoneTitle: string): number | null {
+  const params = new URLSearchParams({ include_ancestors: "true", search: milestoneTitle });
+  const milestones = glabApi<Array<{ id: number; title: string }>>(`projects/${projectRef}/milestones?${params}`);
+  const exact = milestones.find((m) => m.title === milestoneTitle);
+  return exact?.id ?? milestones[0]?.id ?? null;
 }
 
 export async function getIssue(repo: TrackerRepo, number: number): Promise<Issue> {
@@ -50,9 +62,15 @@ export async function updateIssue(repo: TrackerRepo, number: number, opts: Updat
   return mapIssue(glabApi<RawGitLabIssue>(`projects/${ref}/issues/${number}`, "PUT", fields));
 }
 
+// Status labels are mutually exclusive — setting one removes the others.
+const STATUS_LABELS = ["⌛ todo", "🏃 doing", "✌ done", "🥺 waiting"];
+
 export async function setIssueStatus(repo: TrackerRepo, issueNumber: number, status: string): Promise<void> {
   const ref = projectRef(repo);
-  glabApi<unknown>(`projects/${ref}/issues/${issueNumber}`, "PUT", ["--raw-field", `add_labels=${status}`]);
+  const toRemove = STATUS_LABELS.filter((l) => l !== status);
+  const fields = ["--raw-field", `add_labels=${status}`];
+  if (toRemove.length) fields.push("--raw-field", `remove_labels=${toRemove.join(",")}`);
+  glabApi<unknown>(`projects/${ref}/issues/${issueNumber}`, "PUT", fields);
 }
 
 export async function addIssueComment(repo: TrackerRepo, number: number, body: string): Promise<void> {
@@ -87,9 +105,10 @@ export async function toggleChecklistItem(repo: TrackerRepo, issueNumber: number
   return { matched: matchedLine, checked: newChecked };
 }
 
+// GitLab CE only supports "relates_to"; blocks/is_blocked_by require Premium.
 const RELATIONSHIP_MAP: Record<string, string> = {
-  blocks: "blocks",
-  blocked_by: "is_blocked_by",
+  blocks: "relates_to",
+  blocked_by: "relates_to",
   related: "relates_to",
   duplicate: "relates_to",
 };
@@ -102,4 +121,29 @@ export async function setRelationship(repo: TrackerRepo, issueNumber: number, ty
     "--raw-field", `target_issue_iid=${targetNumber}`,
     "--raw-field", `link_type=${RELATIONSHIP_MAP[type] ?? "relates_to"}`,
   ]);
+}
+
+export async function addSubIssue(repo: TrackerRepo, parentNumber: number, childNumber: number): Promise<void> {
+  const fullPath = repoFlag(repo);
+  // Resolve work item GIDs via GraphQL
+  const query = `query { project(fullPath: "${fullPath}") { workItems(iids: ["${parentNumber}", "${childNumber}"]) { nodes { id iid: title } } } }`;
+  const result = glab<{ data: { project: { workItems: { nodes: Array<{ id: string; iid: string }> } } } }>(["api", "graphql", "--raw-field", `query=${query}`]);
+  
+  // Use the issues API to get work item IDs by iid
+  const parentGid = resolveWorkItemGid(fullPath, parentNumber);
+  const childGid = resolveWorkItemGid(fullPath, childNumber);
+
+  // Set parent via mutation
+  const mutation = `mutation { workItemUpdate(input: { id: "${childGid}", hierarchyWidget: { parentId: "${parentGid}" } }) { workItem { id } errors } }`;
+  const mutResult = glab<{ data: { workItemUpdate: { errors: string[] } } }>(["api", "graphql", "--raw-field", `query=${mutation}`]);
+  const errors = mutResult?.data?.workItemUpdate?.errors;
+  if (errors?.length) throw new Error(`Failed to set parent: ${errors.join(", ")}`);
+}
+
+function resolveWorkItemGid(fullPath: string, iid: number): string {
+  const query = `query { project(fullPath: "${fullPath}") { workItems(iids: ["${iid}"]) { nodes { id } } } }`;
+  const result = glab<{ data: { project: { workItems: { nodes: Array<{ id: string }> } } } }>(["api", "graphql", "--raw-field", `query=${query}`]);
+  const nodes = result?.data?.project?.workItems?.nodes;
+  if (!nodes?.length) throw new Error(`Work item #${iid} not found in ${fullPath}`);
+  return nodes[0].id;
 }

@@ -28,7 +28,7 @@ export function glabRaw(args: string[]): string {
 }
 
 export function projectRef(repo: TrackerRepo): string {
-  return `${encodeURIComponent(repo.owner)}%2F${encodeURIComponent(repo.repo)}`;
+  return encodeURIComponent(`${repo.owner}/${repo.repo}`);
 }
 
 export function repoFlag(repo: TrackerRepo): string {

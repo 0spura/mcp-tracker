@@ -24,9 +24,12 @@ interface TrackerConfig {
   defaultMergeMethod?: "merge" | "squash" | "rebase";
   defaultAssignee?: string;
   defaultMilestone?: string;
+  defaultLabels?: string[];
+  typeLabels?: Record<string, string>;
 }
 
 const CONFIG_FILE = ".mcp-tracker.json";
+const CONFIG_LOCAL_FILE = ".mcp-tracker.local.json";
 
 /**
  * Resolves context by precedence: explicit argument > session override > project config > environment.
@@ -100,6 +103,8 @@ export class ContextStore {
   get defaultMergeMethod(): "merge" | "squash" | "rebase" | null { return this.session.defaultMergeMethod ?? this.config().defaultMergeMethod ?? null; }
   get defaultReviewers(): string[] { return this.session.defaultReviewers ?? this.config().defaultReviewers ?? []; }
   get defaultMilestone(): string | null { return this.session.defaultMilestone ?? this.config().defaultMilestone ?? null; }
+  get defaultLabels(): string[] { return this.config().defaultLabels ?? []; }
+  get typeLabels(): Record<string, string> { return this.config().typeLabels ?? {}; }
 
   snapshot() {
     let repo: TrackerRepo | null = null;
@@ -123,22 +128,30 @@ export class ContextStore {
       defaultMergeMethod: this.defaultMergeMethod,
       defaultAssignee: this.defaultAssignee,
       defaultMilestone: this.defaultMilestone,
+      defaultLabels: this.defaultLabels,
+      typeLabels: this.typeLabels,
       configFile: this.configPath(),
     };
   }
 
   private config(): TrackerConfig {
     if (this.configCache) return this.configCache;
-    const p = this.configPath();
-    if (p && existsSync(p)) {
-      try {
-        this.configCache = JSON.parse(readFileSync(p, "utf8")) as TrackerConfig;
-        return this.configCache;
-      } catch {
-        // Malformed config must not break every call — fall back to empty.
-      }
+    const root = this.git(["rev-parse", "--show-toplevel"]) ?? process.cwd();
+    let base: TrackerConfig = {};
+    let local: TrackerConfig = {};
+
+    const basePath = path.join(root, CONFIG_FILE);
+    if (existsSync(basePath)) {
+      try { base = JSON.parse(readFileSync(basePath, "utf8")) as TrackerConfig; } catch { /* ignore */ }
     }
-    this.configCache = {};
+
+    const localPath = path.join(root, CONFIG_LOCAL_FILE);
+    if (existsSync(localPath)) {
+      try { local = JSON.parse(readFileSync(localPath, "utf8")) as TrackerConfig; } catch { /* ignore */ }
+    }
+
+    // Local overrides base — shallow merge, local wins per key.
+    this.configCache = { ...base, ...local };
     return this.configCache;
   }
 
@@ -150,9 +163,15 @@ export class ContextStore {
   private detectRepoFromGit(): TrackerRepo | null {
     if (this.detectedRepoCache !== undefined) return this.detectedRepoCache;
     const remote = this.git(["remote", "get-url", "origin"]);
-    // Handles git@host:owner/repo.git and https://host/owner/repo[.git]
-    const match = remote?.match(/[/:]([^/:]+)\/([^/.]+?)(?:\.git)?$/);
-    this.detectedRepoCache = match ? { owner: match[1], repo: match[2] } : null;
+    // Handles git@host:group/sub/repo.git and https://host/group/sub/repo[.git]
+    // Captures everything after the host as the full path, then splits into owner + repo.
+    const match = remote?.match(/[/:](.+?)(?:\.git)?$/);
+    if (!match) { this.detectedRepoCache = null; return null; }
+    const parts = match[1].split("/").filter(Boolean);
+    if (parts.length < 2) { this.detectedRepoCache = null; return null; }
+    const repo = parts[parts.length - 1];
+    const owner = parts.slice(0, -1).join("/");
+    this.detectedRepoCache = { owner, repo };
     return this.detectedRepoCache;
   }
 
@@ -176,7 +195,9 @@ export class ContextStore {
 }
 
 function parseRepo(value: string): TrackerRepo {
-  const [owner, repo] = value.split("/");
-  if (!owner || !repo) throw new Error(`Invalid repo "${value}": expected "owner/repo"`);
+  const parts = value.split("/");
+  if (parts.length < 2 || parts.some((p) => !p)) throw new Error(`Invalid repo "${value}": expected "owner/repo" or "group/subgroup/repo"`);
+  const repo = parts[parts.length - 1];
+  const owner = parts.slice(0, -1).join("/");
   return { owner, repo };
 }

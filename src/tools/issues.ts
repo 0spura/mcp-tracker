@@ -38,8 +38,9 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
       const resolvedRepo = ctx.resolveRepo(repo);
       const resolvedAssignees = assignees ?? (ctx.defaultAssignee ? [ctx.defaultAssignee] : undefined);
       const resolvedMilestone = milestone ?? ctx.defaultMilestone ?? undefined;
+      const resolvedLabels = [...(ctx.defaultLabels ?? []), ...(labels ?? [])];
       const created = await issue.createIssue(resolvedRepo, title, body, {
-        labels,
+        labels: resolvedLabels.length ? resolvedLabels : undefined,
         assignees: resolvedAssignees,
         milestone: resolvedMilestone,
       });
