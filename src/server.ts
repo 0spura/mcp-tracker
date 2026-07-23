@@ -51,7 +51,7 @@ export function createServer(): McpServer {
   const server = new McpServer({ name: "tracker", version: "1.0.0" });
 
   registerContextTools(server, ctx);
-  registerBranchTools(server, code, ctx);
+  registerBranchTools(server, code, ctx, task ?? undefined);
   registerPRTools(server, code, ctx, task ?? undefined);
 
   if (task) {

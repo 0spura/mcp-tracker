@@ -8,7 +8,7 @@ import { REPO_PARAM, json, text } from "./helpers.js";
 export function registerPRTools(server: McpServer, code: CodeProvider, ctx: ContextStore, issue?: IssueProvider): void {
   server.tool(
     "create_pr",
-    "Create a pull request. Uses default_base and default_reviewers from context when set.",
+    "Create a pull request. Uses default_base and default_reviewers from context when set. When the issue is derivable from the head branch, the description gets a \"Closes #N\" so GitLab/GitHub close the issue automatically on merge, and the issue moves to the configured \"In Review\" status now.",
     {
       repo: REPO_PARAM,
       title: z.string(),
@@ -21,11 +21,12 @@ export function registerPRTools(server: McpServer, code: CodeProvider, ctx: Cont
       const resolvedRepo = ctx.resolveRepo(repo);
       const resolvedBase = base ?? ctx.defaultBase ?? undefined;
 
-      // Auto-link: reference the issue in MR body when derivable from branch
+      // Auto-link: close the issue on merge when derivable from branch, following
+      // GitLab/GitHub's closing-pattern convention (Closes #N / Fixes #N).
       let resolvedBody = body;
       const issueMatch = head.match(/(?:^|\/)(\d+)(?:-|$)/);
       if (issueMatch && !body.includes(`#${issueMatch[1]}`)) {
-        resolvedBody = `${body}\n\nRelates to #${issueMatch[1]}`;
+        resolvedBody = `${body}\n\nCloses #${issueMatch[1]}`;
       }
 
       const pr = await code.createPR(resolvedRepo, title, resolvedBody, head, resolvedBase);
@@ -33,6 +34,17 @@ export function registerPRTools(server: McpServer, code: CodeProvider, ctx: Cont
       const allReviewers = [...new Set([...(ctx.defaultReviewers ?? []), ...(reviewers ?? [])])];
       if (allReviewers.length > 0) {
         await code.requestReviewers(resolvedRepo, pr.number, allReviewers);
+      }
+
+      // Auto-move issue to "In Review" when opening a PR for it, if configured
+      const reviewLabel = ctx.statusLabels["In Review"];
+      if (issueMatch && issue && reviewLabel) {
+        try {
+          const allLabels = Object.values(ctx.statusLabels);
+          await issue.setIssueStatus(resolvedRepo, parseInt(issueMatch[1], 10), reviewLabel, allLabels);
+        } catch {
+          // best-effort: don't fail PR creation if status move fails
+        }
       }
 
       return json(pr);
@@ -96,21 +108,9 @@ export function registerPRTools(server: McpServer, code: CodeProvider, ctx: Cont
       const resolvedMethod = method ?? ctx.defaultMergeMethod ?? "squash";
       const resolvedRepo = ctx.resolveRepo(repo);
 
-      // Get the MR's source branch to derive issue number before merging
-      const pr = await code.getPR(resolvedRepo, number);
+      // Issue closing is left to GitLab/GitHub's own "Closes #N" pattern in the MR/PR
+      // description (see create_pr) — merging here does not move any status label.
       await code.mergePR(resolvedRepo, number, resolvedMethod);
-
-      // Auto-move issue to done when derivable from branch
-      const issueMatch = pr.headBranch.match(/(?:^|\/)(\d+)(?:-|$)/);
-      if (issueMatch && issue) {
-        try {
-          const doneLabel = ctx.statusLabels["Done"] ?? "✌ done";
-          const allLabels = Object.values(ctx.statusLabels);
-          await issue.setIssueStatus(resolvedRepo, parseInt(issueMatch[1], 10), doneLabel, allLabels.length ? allLabels : undefined);
-        } catch {
-          // best-effort: don't fail the merge if status move fails
-        }
-      }
 
       return text(`PR #${number} merged via ${resolvedMethod}`);
     }

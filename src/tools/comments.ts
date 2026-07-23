@@ -3,15 +3,15 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ContextStore } from "../context.js";
 import type { CodeProvider } from "../interfaces/code.js";
 import type { IssueProvider } from "../interfaces/issue.js";
-import { REPO_PARAM, json, text } from "./helpers.js";
+import { REPO_PARAM, ISSUE_NUMBER_PARAM, json, text } from "./helpers.js";
 
 export function registerCommentTools(server: McpServer, code: CodeProvider, issue: IssueProvider, ctx: ContextStore): void {
   server.tool(
     "add_issue_comment",
-    "Add a comment to an issue. Targets the active issue (from the current branch, or a set_context override) when number is omitted.",
+    "Add a comment to an issue.",
     {
       repo: REPO_PARAM,
-      number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
+      number: ISSUE_NUMBER_PARAM,
       body: z.string(),
     },
     async ({ repo, number, body }) => {
@@ -37,11 +37,11 @@ export function registerCommentTools(server: McpServer, code: CodeProvider, issu
 
   server.tool(
     "list_comments",
-    "List comments on an issue or pull request. For issues, targets the active issue (current branch, or a set_context override) when number is omitted.",
+    "List comments on an issue or pull request.",
     {
       repo: REPO_PARAM,
       type: z.enum(["issue", "pr"]).describe("Whether the number refers to an issue or a PR"),
-      number: z.number().int().positive().optional().describe("For issues, defaults to the active issue derived from the current branch"),
+      number: ISSUE_NUMBER_PARAM.describe("For issues, defaults to active issue. Required for PRs."),
     },
     async ({ repo, type, number }) => {
       const resolvedRepo = ctx.resolveRepo(repo);

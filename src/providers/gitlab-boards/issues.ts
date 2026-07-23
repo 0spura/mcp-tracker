@@ -1,6 +1,6 @@
 import type { TrackerRepo, Issue, RelationshipType, CreateIssueOptions, UpdateIssueOptions } from "../../interfaces/types.js";
 import type { ListIssuesOptions } from "../../interfaces/issue.js";
-import { glab, glabApi, projectRef, repoFlag } from "../gitlab/helpers.js";
+import { glab, glabApi, glabVoid, projectRef, repoFlag } from "../gitlab/helpers.js";
 
 interface RawGitLabIssue {
   iid: number;
@@ -63,20 +63,25 @@ export async function updateIssue(repo: TrackerRepo, number: number, opts: Updat
 }
 
 // Status labels are mutually exclusive — setting one removes the others.
-const DEFAULT_STATUS_LABELS = ["⌛ todo", "🏃 doing", "✌ done", "🥺 waiting"];
-
+// The set of labels comes from statusLabels in .mcp-tracker.json; there is no built-in default,
+// since a guessed label taxonomy would silently no-op against labels that don't exist in the project.
 export async function setIssueStatus(repo: TrackerRepo, issueNumber: number, status: string, allStatusLabels?: string[]): Promise<void> {
+  if (!allStatusLabels?.length) {
+    throw new Error(
+      `No statusLabels configured for issue status moves. Add a "statusLabels" map to .mcp-tracker.json, e.g. { "statusLabels": { "Todo": "your-todo-label", "Doing": "your-doing-label", "Done": "your-done-label" } }.`
+    );
+  }
   const ref = projectRef(repo);
-  const all = allStatusLabels?.length ? allStatusLabels : DEFAULT_STATUS_LABELS;
-  const toRemove = all.filter((l) => l !== status);
+  const toRemove = allStatusLabels.filter((l) => l !== status);
   const fields = ["--raw-field", `add_labels=${status}`];
   if (toRemove.length) fields.push("--raw-field", `remove_labels=${toRemove.join(",")}`);
   glabApi<unknown>(`projects/${ref}/issues/${issueNumber}`, "PUT", fields);
 }
 
 export async function addIssueComment(repo: TrackerRepo, number: number, body: string): Promise<void> {
-  // glab issue note has no "create" subcommand; uses -m not -b
-  glab<unknown>(["issue", "note", String(number), "-R", repoFlag(repo), "-m", body]);
+  // glab issue note has no "create" subcommand; uses -m not -b. Its stdout is plain text
+  // (a URL), not JSON — glabVoid avoids misreporting success as a JSON-parse failure.
+  glabVoid(["issue", "note", String(number), "-R", repoFlag(repo), "-m", body]);
 }
 
 export async function listIssueComments(repo: TrackerRepo, number: number): Promise<Array<{ id: number; author: string; body: string; createdAt: string }>> {

@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ContextStore } from "../context.js";
 import type { IssueProvider } from "../interfaces/issue.js";
 import type { BoardProvider } from "../interfaces/board.js";
-import { REPO_PARAM, json, text } from "./helpers.js";
+import { REPO_PARAM, ISSUE_NUMBER_PARAM, json, text } from "./helpers.js";
 
 export function registerIssueTools(server: McpServer, issue: IssueProvider, board: BoardProvider | null, ctx: ContextStore): void {
   server.tool(
@@ -29,16 +29,18 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
       repo: REPO_PARAM,
       title: z.string(),
       body: z.string(),
+      type: z.string().optional().describe("Issue type, e.g. 'feature', 'bug'. Resolved to a label via typeLabels in .mcp-tracker.json; passed through as-is if not mapped."),
       labels: z.array(z.string()).optional(),
       assignees: z.array(z.string()).optional().describe("Defaults to default_assignee from context if set"),
       milestone: z.string().optional().describe("Milestone title"),
       ...(board ? { fields: z.record(z.string()).optional().describe("Board field values, e.g. { \"Size\": \"M\", \"Priority\": \"High\" }. Requires board context.") } : {}),
     },
-    async ({ repo, title, body, labels, assignees, milestone, ...rest }) => {
+    async ({ repo, title, body, type, labels, assignees, milestone, ...rest }) => {
       const resolvedRepo = ctx.resolveRepo(repo);
       const resolvedAssignees = assignees ?? (ctx.defaultAssignee ? [ctx.defaultAssignee] : undefined);
       const resolvedMilestone = milestone ?? ctx.defaultMilestone ?? undefined;
-      const resolvedLabels = [...(ctx.defaultLabels ?? []), ...(labels ?? [])];
+      const resolvedType = type ? (ctx.typeLabels[type] ?? type) : undefined;
+      const resolvedLabels = [...(ctx.defaultLabels ?? []), ...(resolvedType ? [resolvedType] : []), ...(labels ?? [])];
       const created = await issue.createIssue(resolvedRepo, title, body, {
         labels: resolvedLabels.length ? resolvedLabels : undefined,
         assignees: resolvedAssignees,
@@ -60,10 +62,10 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
 
   server.tool(
     "get_issue",
-    "Get issue details. Targets the active issue (current branch, or a set_context override) when issue_number is omitted.",
+    "Get issue details.",
     {
       repo: REPO_PARAM,
-      issue_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
+      issue_number: ISSUE_NUMBER_PARAM,
     },
     async ({ repo, issue_number }) =>
       json(await issue.getIssue(ctx.resolveRepo(repo), ctx.resolveIssue(issue_number)))
@@ -71,44 +73,40 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
 
   server.tool(
     "update_issue",
-    "Update an issue — title, body, labels, assignees, or state",
+    "Update an issue's title, body, labels, assignees, state, or board status.",
     {
       repo: REPO_PARAM,
-      issue_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
+      issue_number: ISSUE_NUMBER_PARAM,
       title: z.string().optional(),
       body: z.string().optional(),
       labels: z.array(z.string()).optional(),
       assignees: z.array(z.string()).optional(),
       state: z.enum(["open", "closed"]).optional(),
+      status: z.string().optional().describe("Board status, e.g. 'In Progress'. Resolved via statusLabels in .mcp-tracker.json."),
     },
-    async ({ repo, issue_number, ...opts }) =>
-      json(await issue.updateIssue(ctx.resolveRepo(repo), ctx.resolveIssue(issue_number), opts))
-  );
-
-  server.tool(
-    "move_issue_status",
-    "Move an issue to a status column on the board. Targets the active issue (current branch, or a set_context override) when issue_number is omitted.",
-    {
-      repo: REPO_PARAM,
-      issue_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
-      status: z.string().describe("Status column name, e.g. 'In Progress', 'In Review', 'Done'"),
-    },
-    async ({ repo, issue_number, status }) => {
+    async ({ repo, issue_number, status, ...opts }) => {
+      const resolvedRepo = ctx.resolveRepo(repo);
       const n = ctx.resolveIssue(issue_number);
-      const resolvedStatus = ctx.statusLabels[status] ?? status;
-      const allLabels = Object.values(ctx.statusLabels);
-      await issue.setIssueStatus(ctx.resolveRepo(repo), n, resolvedStatus, allLabels.length ? allLabels : undefined);
-      return text(`Issue #${n} moved to "${status}"`);
+      const hasFieldEdits = Object.values(opts).some((v) => v !== undefined);
+      const result = hasFieldEdits ? await issue.updateIssue(resolvedRepo, n, opts) : await issue.getIssue(resolvedRepo, n);
+
+      if (status !== undefined) {
+        const resolvedStatus = ctx.statusLabels[status] ?? status;
+        const allLabels = Object.values(ctx.statusLabels);
+        await issue.setIssueStatus(resolvedRepo, n, resolvedStatus, allLabels.length ? allLabels : undefined);
+      }
+
+      return json(result);
     }
   );
 
   if (issue.toggleChecklistItem) {
     server.tool(
       "toggle_checklist_item",
-      "Mark or unmark a checklist item in an issue body. Targets the active issue (current branch, or a set_context override) when issue_number is omitted.",
+      "Mark or unmark a checklist item in an issue body.",
       {
         repo: REPO_PARAM,
-        issue_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
+        issue_number: ISSUE_NUMBER_PARAM,
         item_text: z.string().describe("Partial or full text of the checklist item to toggle"),
         checked: z.boolean().optional().describe("Force to checked (true) or unchecked (false). Omit to toggle."),
       },
@@ -125,7 +123,7 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
       "Add a child (sub) issue to a parent issue",
       {
         repo: REPO_PARAM,
-        parent_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
+        parent_number: ISSUE_NUMBER_PARAM,
         child_number: z.number().int().positive(),
       },
       async ({ repo, parent_number, child_number }) => {
@@ -139,10 +137,10 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
   if (issue.listSubIssues) {
     server.tool(
       "list_sub_issues",
-      "List sub-issues of a parent issue. Targets the active issue (current branch, or a set_context override) when issue_number is omitted.",
+      "List sub-issues of a parent issue.",
       {
         repo: REPO_PARAM,
-        issue_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
+        issue_number: ISSUE_NUMBER_PARAM,
       },
       async ({ repo, issue_number }) =>
         json(await issue.listSubIssues!(ctx.resolveRepo(repo), ctx.resolveIssue(issue_number)))
@@ -152,10 +150,10 @@ export function registerIssueTools(server: McpServer, issue: IssueProvider, boar
   if (issue.setRelationship) {
     server.tool(
       "set_issue_relationship",
-      "Set a relationship between two issues. The source defaults to the active issue (current branch, or a set_context override) when issue_number is omitted.",
+      "Set a relationship between two issues.",
       {
         repo: REPO_PARAM,
-        issue_number: z.number().int().positive().optional().describe("Defaults to the active issue derived from the current branch"),
+        issue_number: ISSUE_NUMBER_PARAM,
         type: z.enum(["blocks", "blocked_by", "related", "duplicate"]),
         target_number: z.number().int().positive(),
       },

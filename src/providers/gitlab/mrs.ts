@@ -1,5 +1,5 @@
 import type { TrackerRepo, PR, CheckRun } from "../../interfaces/types.js";
-import { glab, glabApi, glabRaw, projectRef, repoFlag, type RawGitLabMR, type RawGitLabNote } from "./helpers.js";
+import { glab, glabApi, glabRaw, glabVoid, projectRef, repoFlag, type RawGitLabMR, type RawGitLabNote } from "./helpers.js";
 
 function mapMR(mr: RawGitLabMR): PR {
   return {
@@ -50,7 +50,7 @@ export async function mergePR(repo: TrackerRepo, number: number, method?: string
   const args = ["mr", "merge", String(number), "-R", repoFlag(repo)];
   if (method === "squash") args.push("--squash");
   else if (method === "rebase") args.push("--rebase");
-  glab<unknown>(args);
+  glabVoid(args);
 }
 
 export async function getPRChecks(repo: TrackerRepo, number: number): Promise<CheckRun[]> {
@@ -98,7 +98,7 @@ export async function requestReviewers(repo: TrackerRepo, prNumber: number, revi
 }
 
 export async function addPRComment(repo: TrackerRepo, number: number, body: string): Promise<void> {
-  glab<unknown>(["mr", "note", "create", String(number), "-R", repoFlag(repo), "-m", body]);
+  glabVoid(["mr", "note", "create", String(number), "-R", repoFlag(repo), "-m", body]);
 }
 
 export async function listPRComments(repo: TrackerRepo, number: number): Promise<Array<{ id: number; author: string; body: string; createdAt: string }>> {

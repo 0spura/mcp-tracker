@@ -16,6 +16,19 @@ export function glabApi<T>(path: string, method = "GET", extraArgs: string[] = [
   return glab<T>(["api", path, "--method", method, ...extraArgs]);
 }
 
+// Runs a glab subcommand whose stdout is human-readable text, not JSON (e.g. `issue note`,
+// `mr note create`, `mr merge`). Only throws on actual command failure — never on stdout that
+// isn't valid JSON, which glab<T> would misreport as a failure despite the command succeeding.
+export function glabVoid(args: string[]): void {
+  try {
+    execFileSync("glab", args, { encoding: "utf8", stdio: ["inherit", "pipe", "pipe"] });
+  } catch (err: unknown) {
+    const e = err as { stderr?: Buffer | string; message?: string };
+    const stderr = (e.stderr?.toString() ?? "").trim();
+    throw new Error(stderr || e.message || `glab ${args[0]} failed`);
+  }
+}
+
 // Runs glab for plain-text output (e.g. a job trace). Best-effort: returns
 // whatever reached stdout, empty string on failure.
 export function glabRaw(args: string[]): string {

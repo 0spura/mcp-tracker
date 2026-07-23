@@ -1,7 +1,7 @@
 import type { TrackerRepo, PR, CheckRun } from "./types.js";
 
 export interface CodeProvider {
-  createBranch(repo: TrackerRepo, issueNumber: number | null, branchName: string): Promise<{ name: string }>;
+  createBranch(repo: TrackerRepo, issueNumber: number | null, branchName: string, base?: string): Promise<{ name: string }>;
   createPR(repo: TrackerRepo, title: string, body: string, head: string, base?: string): Promise<PR>;
   updatePR(repo: TrackerRepo, number: number, opts: { title?: string; body?: string }): Promise<PR>;
   getPRChecks(repo: TrackerRepo, number: number): Promise<CheckRun[]>;

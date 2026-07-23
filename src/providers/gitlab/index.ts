@@ -4,7 +4,7 @@ import { createBranch } from "./branches.js";
 import { createPR, updatePR, getPRChecks, listPRs, getPR, mergePR, requestReviewers, addPRComment, listPRComments } from "./mrs.js";
 
 export class GitLabCodeProvider implements CodeProvider {
-  createBranch(repo: TrackerRepo, issueNumber: number | null, branchName: string) { return createBranch(repo, issueNumber, branchName); }
+  createBranch(repo: TrackerRepo, issueNumber: number | null, branchName: string, base?: string) { return createBranch(repo, issueNumber, branchName, base); }
   createPR(repo: TrackerRepo, title: string, body: string, head: string, base?: string) { return createPR(repo, title, body, head, base); }
   updatePR(repo: TrackerRepo, number: number, opts: { title?: string; body?: string }) { return updatePR(repo, number, opts); }
   getPRChecks(repo: TrackerRepo, number: number) { return getPRChecks(repo, number); }
