@@ -49,7 +49,6 @@ export class ContextStore {
     defaultMilestone: null,
   };
 
-  private configCache: TrackerConfig | null = null;
   private detectedRepoCache: TrackerRepo | null | undefined;
 
   resolveRepo(explicit?: string): TrackerRepo {
@@ -138,7 +137,9 @@ export class ContextStore {
   }
 
   private config(): TrackerConfig {
-    if (this.configCache) return this.configCache;
+    // Re-read on every call rather than caching: the config file can be created or edited
+    // mid-session (e.g. by an agent setting up the project), and a stale in-memory cache
+    // from before the file existed would silently ignore those changes for the process lifetime.
     const root = this.git(["rev-parse", "--show-toplevel"]) ?? process.cwd();
     let base: TrackerConfig = {};
     let local: TrackerConfig = {};
@@ -154,8 +155,7 @@ export class ContextStore {
     }
 
     // Local overrides base — shallow merge, local wins per key.
-    this.configCache = { ...base, ...local };
-    return this.configCache;
+    return { ...base, ...local };
   }
 
   private configPath(): string {
@@ -166,9 +166,12 @@ export class ContextStore {
   private detectRepoFromGit(): TrackerRepo | null {
     if (this.detectedRepoCache !== undefined) return this.detectedRepoCache;
     const remote = this.git(["remote", "get-url", "origin"]);
-    // Handles git@host:group/sub/repo.git and https://host/group/sub/repo[.git]
-    // Captures everything after the host as the full path, then splits into owner + repo.
-    const match = remote?.match(/[/:](.+?)(?:\.git)?$/);
+    if (!remote) { this.detectedRepoCache = null; return null; }
+    // Handles git@host:group/sub/repo.git and scheme://[user@]host/group/sub/repo[.git].
+    // Strips the scheme and host explicitly first, so an https remote's "https:" doesn't
+    // get mistaken for the git@host: separator and pull the host into the owner path.
+    const withoutGit = remote.replace(/\.git$/, "");
+    const match = withoutGit.match(/^(?:[a-zA-Z][\w+.-]*:\/\/)?(?:[^@/]+@)?[^/:]+[/:](.+)$/);
     if (!match) { this.detectedRepoCache = null; return null; }
     const parts = match[1].split("/").filter(Boolean);
     if (parts.length < 2) { this.detectedRepoCache = null; return null; }
