@@ -79,6 +79,11 @@ export class ContextStore {
     return new ContextStore(run, () => loadConfig());
   }
 
+  /** Raw resolved config (workflow stages, automation triggers, labels). */
+  async getConfig(): Promise<TrackerConfig> {
+    return this.configPromise;
+  }
+
   /**
    * Merge session overrides. An explicit `active_issue: null` clears it.
    */
