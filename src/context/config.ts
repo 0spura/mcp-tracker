@@ -20,6 +20,8 @@ const workflowSchema = z.object({
       createIssue: z.string().optional(),
       createBranch: z.string().optional(),
       createPr: z.string().optional(),
+      mergePr: z.string().optional(),
+      reviewApproved: z.string().optional(),
     })
     .optional(),
 });
@@ -41,6 +43,7 @@ const versionedShape = {
   boardId: z.string().optional(),
   defaults: defaultsSchema.optional(),
   workflow: workflowSchema.optional(),
+  typeLabels: z.record(z.string()).optional(),
 };
 
 const localShape = {
@@ -68,7 +71,12 @@ export interface TrackerWorkflowStage {
 
 export interface TrackerWorkflow {
   stages?: TrackerWorkflowStage[];
-  on?: Partial<Record<'createIssue' | 'createBranch' | 'createPr', string>>;
+  on?: Partial<
+    Record<
+      'createIssue' | 'createBranch' | 'createPr' | 'mergePr' | 'reviewApproved',
+      string
+    >
+  >;
 }
 
 export interface TrackerConfig {
@@ -80,6 +88,7 @@ export interface TrackerConfig {
   activeIssue?: string;
   defaults?: TrackerDefaults;
   workflow?: TrackerWorkflow;
+  typeLabels?: Record<string, string>;
 }
 
 const CONFIG_FILE = '.mcp-tracker.json';
@@ -161,6 +170,10 @@ function mergeConfigs(base: TrackerConfig, override: TrackerConfig): TrackerConf
     merged.workflow = mergedWorkflow;
   }
 
+  if (base.typeLabels !== undefined || override.typeLabels !== undefined) {
+    merged.typeLabels = { ...base.typeLabels, ...override.typeLabels };
+  }
+
   return merged;
 }
 
@@ -183,13 +196,18 @@ function mergeDefaults(
     'reviewers',
     'assignee',
     'milestone',
-    'labels',
   ];
   for (const key of keys) {
     if (override[key] !== undefined) {
       (merged as unknown as Record<string, TrackerDefaults[keyof TrackerDefaults]>)[key] =
         override[key];
     }
+  }
+
+  // Labels are additive by nature: project labels live in the versioned file,
+  // personal labels in the local one; the merged config carries both.
+  if (base?.labels !== undefined || override.labels !== undefined) {
+    merged.labels = [...new Set([...(base?.labels ?? []), ...(override.labels ?? [])])];
   }
 
   return merged;

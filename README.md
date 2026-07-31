@@ -9,8 +9,8 @@ MCP server for interacting with code hosts and issue trackers from agentic codin
 Two independent provider types, selected by environment:
 
 ```
-CODE_PROVIDER   github                              # branches, PRs, CI checks, reviews
-TASK_PROVIDER   github-projects | local             # issues, comments, boards, metadata
+CODE_PROVIDER   github | gitlab                    # branches, PRs, CI checks, reviews
+TASK_PROVIDER   github-projects | gitlab | local   # issues, comments, boards, metadata
 ```
 
 `CODE_PROVIDER` defaults to `github`. `TASK_PROVIDER` is optional — when unset, issue and board tools are not registered.
@@ -21,19 +21,27 @@ Each provider declares a bundle of capabilities and the scopes it needs:
 |---|---|---|
 | `code` | branch, PR, review tools | always |
 | `issue` | issue, comment, label, milestone tools | TASK_PROVIDER is set |
-| `board` | board tools | TASK_PROVIDER supports boards (github-projects only) |
+| `board` | board tools | TASK_PROVIDER supports boards (github-projects, gitlab) |
 
 Optional sub-capabilities on the issue provider (tools registered only when implemented):
 
-| Method | github-projects | local |
+| Method | github-projects | gitlab | local |
+|---|---|---|---|
+| `toggleChecklistItem` | ✓ | ✓ | ✓ |
+| `setRelationship` | ✓ | ✓ (CE degrades to `relates_to`) | ✓ |
+| `addSubIssue` / `listSubIssues` | ✓ | ✓ (GraphQL work items) | ✓ |
+| `listLabels` | ✓ | ✓ | ✓ |
+| `listMilestones` | ✓ | ✓ | errors explicitly (unsupported) |
+
+Optional sub-capabilities on the board provider:
+
+| Method | github-projects | gitlab |
 |---|---|---|
-| `toggleChecklistItem` | ✓ | ✓ |
-| `setRelationship` | ✓ | ✓ |
-| `addSubIssue` / `listSubIssues` | ✓ | ✓ |
-| `listLabels` | ✓ | ✓ |
-| `listMilestones` | ✓ | errors explicitly (unsupported) |
+| `addIssueToBoard` | ✓ (explicit project membership) | omitted: open issues appear on GitLab boards implicitly, so `add_issue_to_board` is not registered |
 
 Relationship mechanisms on github-projects: `blocks`/`blocked_by` use the native issue-dependencies API; `duplicate` posts a `Duplicate of #N` comment (documented GitHub keyword); `related` posts a cross-reference comment. The tool response names the mechanism used.
+
+On gitlab: `blocks`/`blocked_by`/`related`/`duplicate` all create GitLab issue links. GitLab CE only supports `relates_to`, so every relationship type degrades to `relates_to`; the tool still reports `native` because issue links are a native GitLab mechanism. Issue status moves (via `move_issue_status` and board tools) are implemented as mutually-exclusive labels derived from `workflow.stages` (`id` or `name`) for the issue provider, and from board list labels for the board provider.
 
 ## Configuration
 
@@ -62,6 +70,17 @@ For local file-based tracking (no external account needed):
     "CODE_PROVIDER": "github",
     "TASK_PROVIDER": "local",
     "LOCAL_TASK_DIR": ".tasks"
+  }
+}
+```
+
+For GitLab (uses the `glab` CLI for authentication and API access):
+
+```json
+{
+  "env": {
+    "CODE_PROVIDER": "gitlab",
+    "TASK_PROVIDER": "gitlab"
   }
 }
 ```
@@ -96,6 +115,10 @@ Precedence: project config file > env > default. Cross-project work needs no cwd
     "milestone": "Sprint 12",
     "labels": ["agent"]
   },
+  "typeLabels": {
+    "feat": "🚧 feature",
+    "fix": "🚧 fix"
+  },
   "workflow": {
     "stages": [
       { "key": "design", "name": "In design" },
@@ -113,8 +136,11 @@ Precedence: project config file > env > default. Cross-project work needs no cwd
 ```
 
 - `workflow.stages` is an ordered list of status columns. A stage is `{key, name}` (resolved to native IDs once per session, cached) or `{key, name, id}` (uses the native option ID directly).
-- `workflow.on` maps events to stage keys: new issues land in `createIssue`'s stage, branch creation moves the issue to `createBranch`'s, PR creation to `createPr`'s.
+- `workflow.on` maps events to stage keys: new issues land in `createIssue`'s stage, branch creation moves the issue to `createBranch`'s, PR creation to `createPr`'s, a PR approval to `reviewApproved`'s, and a successful merge moves the active issue to `mergePr`'s.
 - `activeIssue` is valid only in `.mcp-tracker.local.json` (state, not config).
+- A milestone title of `"$current"` (config default, session context, or tool argument) resolves dynamically to the active milestone with the nearest upcoming due date; undated and past-due milestones are skipped and the call errors clearly when none qualifies.
+- `typeLabels` maps short issue types to the project's labels. When configured, `create_issue` accepts a `type` argument (the valid keys are listed in the tool description); the mapped label is added alongside `labels`, and an unknown type errors with the valid keys.
+- `defaults` fields merge with `.mcp-tracker.local.json` winning per field, except `labels`, which concatenates both files (deduped) — keep project labels in the versioned file and personal ones (your team, your scope) in the local file.
 
 ## Context
 
@@ -168,7 +194,7 @@ When `active_issue` is set, these tools use it without requiring an explicit num
 | `list_issues` | List issues by state, labels, assignee |
 | `create_issue` | Create with full initial state: labels, assignees, milestone, status, board fields, relationships, parent |
 | `get_issue` | Get issue details |
-| `update_issue` | Update title, body, labels, assignees, state, and batch relationship ops |
+| `update_issue` | Update title, body, labels, assignees, milestone, state, and batch relationship ops |
 | `move_issue_status` | Move issue to a status column (stage key or name) |
 | `toggle_checklist_item` | Mark/unmark a checklist item by partial text |
 | `add_sub_issue` | Add child issue to parent |
@@ -184,12 +210,12 @@ Composite creates and updates apply the primary change first and every secondary
 | `add_pr_comment` | Add comment to PR |
 | `list_comments` | List comments on issue or PR |
 
-### Board (github-projects only)
+### Board (github-projects, gitlab)
 | Tool | Description |
 |---|---|
 | `list_board_items` | List all items on the board (full pagination) |
 | `list_board_fields` | List custom fields and options |
-| `add_issue_to_board` | Add issue to board; returns item ID |
+| `add_issue_to_board` | Add issue to board; returns item ID (github-projects only) |
 | `set_item_fields` | Set field values (Size, Priority, Sprint, etc.) |
 
 ### Metadata
@@ -228,10 +254,11 @@ src/
                  types, scope, bundle, checklist
   context/       store, config (nested schema), git derivation, context tools
   transport/     gh.ts — validated REST/GraphQL runner (injectable GhRunner)
+                 glab.ts — validated REST/GraphQL runner for GitLab CLI
   domains/
-    code/        CodeProvider + github impl + branch/PR/review tools
-    issues/      IssueProvider + github-projects and local impls + tools
-    boards/      BoardProvider + github-projects impl + tools
+    code/        CodeProvider + github and gitlab impls + branch/PR/review tools
+    issues/      IssueProvider + github-projects, gitlab, and local impls + tools
+    boards/      BoardProvider + github-projects and gitlab impls + tools
     comments/    comment tools
     local/       markdown file storage engine
   server.ts      provider resolution + tool registration

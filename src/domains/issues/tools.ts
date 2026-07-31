@@ -15,7 +15,8 @@ export function registerIssueTools(
   server: McpServer,
   issue: IssueProvider,
   ctx: ContextStore,
-  requires: Array<'repo' | 'board'>
+  requires: Array<'repo' | 'board'>,
+  typeLabels?: Record<string, string>
 ): void {
   const scopeOf = (repo?: string) => resolveScope(ctx, requires, repo);
 
@@ -40,12 +41,26 @@ export function registerIssueTools(
       )
   );
 
+  const typeKeys = Object.keys(typeLabels ?? {});
+  const typeParam: { type?: z.ZodOptional<z.ZodString> } =
+    typeKeys.length > 0
+      ? {
+          type: z
+            .string()
+            .optional()
+            .describe(
+              `Issue type, mapped to the project type label. One of: ${typeKeys.join(', ')}.`
+            ),
+        }
+      : {};
+
   server.tool(
     'create_issue',
     'Create an issue with its full initial state in one call: labels, assignees, milestone, board status, board fields, relationships (blocks/blocked_by/related/duplicate_of), and parent. When board context is set, the issue is added to the board automatically. Secondary-step failures are reported in warnings, never thrown.',
     {
       title: z.string(),
       body: z.string(),
+      ...typeParam,
       labels: z.array(z.string()).optional(),
       assignees: z.array(z.string()).optional(),
       milestone: z.string().optional(),
@@ -61,7 +76,23 @@ export function registerIssueTools(
     async ({ repo: repoArg, ...args }) => {
       const scope = await scopeOf(repoArg);
       const config = await ctx.getConfig();
+      const defaultAssignee = (await ctx.resolveDefaultAssignee()).value;
       const defaultMilestone = (await ctx.resolveDefaultMilestone()).value;
+      let typeLabel: string | undefined;
+      if (args.type !== undefined) {
+        typeLabel = config.typeLabels?.[args.type];
+        if (typeLabel === undefined) {
+          throw new Error(
+            `unknown issue type "${args.type}"; valid types: ${
+              Object.keys(config.typeLabels ?? {}).join(', ') || 'none configured'
+            }`
+          );
+        }
+      }
+      const labels = [
+        ...(typeLabel !== undefined ? [typeLabel] : []),
+        ...(args.labels ?? config.defaults?.labels ?? []),
+      ];
       const toIds = (list?: number[]) => list?.map(String);
       let status = args.status;
       if (!status && config.workflow?.on?.createIssue) {
@@ -71,8 +102,10 @@ export function registerIssueTools(
         status = stage ? (stage.id ?? stage.name) : undefined;
       }
       const result = await issue.createIssue(scope, args.title, args.body, {
-        labels: args.labels ?? config.defaults?.labels,
-        assignees: args.assignees,
+        labels: labels.length > 0 ? labels : undefined,
+        assignees:
+          args.assignees ??
+          (defaultAssignee === 'unset' ? undefined : [defaultAssignee]),
         milestone: args.milestone ?? (defaultMilestone === 'unset' ? undefined : defaultMilestone),
         status,
         fields: args.fields,
@@ -96,13 +129,14 @@ export function registerIssueTools(
 
   server.tool(
     'update_issue',
-    'Update title, body, labels, assignees, state, and batch relationship operations in one call. Defaults to the active issue.',
+    'Update title, body, labels, assignees, milestone, state, and batch relationship operations in one call. Defaults to the active issue.',
     {
       number: ISSUE_NUMBER_PARAM,
       title: z.string().optional(),
       body: z.string().optional(),
       labels: z.array(z.string()).optional(),
       assignees: z.array(z.string()).optional(),
+      milestone: z.string().nullable().optional().describe('Milestone title; null clears it.'),
       state: z.enum(['open', 'closed']).optional(),
       add_blocks: z.array(z.number().int().positive()).optional(),
       remove_blocks: z.array(z.number().int().positive()).optional(),
@@ -123,6 +157,7 @@ export function registerIssueTools(
           body: opts.body,
           labels: opts.labels,
           assignees: opts.assignees,
+          milestone: opts.milestone,
           state: opts.state,
           add_blocks: toIds(opts.add_blocks),
           remove_blocks: toIds(opts.remove_blocks),

@@ -33,16 +33,19 @@ export function registerBoardTools(
     async (args) => json(await board.listBoardFields(await scopeOf(args.board_id)))
   );
 
-  server.tool(
-    'add_issue_to_board',
-    'Add an issue to the board; returns the board item ID. Defaults to the active issue.',
-    { number: ISSUE_NUMBER_PARAM, board_id: BOARD_ID_PARAM },
-    async (args) => {
-      const scope = await scopeOf(args.board_id);
-      const itemId = await board.addIssueToBoard(scope, await resolveIssueId(ctx, args.number));
-      return json({ item_id: itemId });
-    }
-  );
+  if (board.addIssueToBoard) {
+    server.tool(
+      'add_issue_to_board',
+      'Add an issue to the board; returns the board item ID. Defaults to the active issue.',
+      { number: ISSUE_NUMBER_PARAM, board_id: BOARD_ID_PARAM },
+      async (args) => {
+        const scope = await scopeOf(args.board_id);
+        const addIssueToBoard = board.addIssueToBoard!;
+        const itemId = await addIssueToBoard(scope, await resolveIssueId(ctx, args.number));
+        return json({ item_id: itemId });
+      }
+    );
+  }
 
   server.tool(
     'set_item_fields',

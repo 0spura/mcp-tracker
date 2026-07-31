@@ -46,6 +46,7 @@ src/
       capabilities.ts    BoardProvider interface
       tools.ts           board tools
       github-projects.ts implementation (paginates all items, caches field/option IDs)
+      gitlab.ts          implementation over glab api (lists/labels as status)
     comments/
       tools.ts           comment tools (route to code or issue provider)
     local/
@@ -55,9 +56,12 @@ src/
     gh.ts                GhRunner: REST (gh api) and GraphQL (-F scalars, --input for
                          nested variables); raw responses validated with caller-supplied
                          zod schemas
+    glab.ts              GlabRunner: REST (`glab api`) and GraphQL (`glab api graphql`)
+                         with the same variable and validation patterns as gh.ts
 test/
   contract/issue-provider.ts   shared IssueProvider contract suite
   helpers/fake-gh.ts           scripted GhRunner fake
+  helpers/fake-glab.ts         scripted GlabRunner fake
 ```
 
 ## Provider composition
@@ -75,13 +79,15 @@ interface ProviderBundle {
 }
 ```
 
-- `createGitHubProvider(gh)` → `{ requires: ['repo'], code }`
-- `createGitHubProjectsProvider(gh)` → `{ requires: ['repo'], issue, board }`
-- `createLocalProvider(dir)` → `{ requires: [], issue }`
+- `createGitHubCodeProvider(gh)` → `{ requires: ['repo'], code }`
+- `createGitLabCodeProvider(glab)` → `{ requires: ['repo'], code }`
+- `createGitHubProjectsIssueProvider(gh)` → `{ requires: ['repo'], issue, board }`
+- `createGitLabIssueProvider(glab)` + `createGitLabBoardProvider(glab)` → `{ requires: ['repo'], issue, board }`
+- `createLocalIssueProvider(dir)` → `{ requires: [], issue }`
 
 `server.ts` merges the code bundle (from `CODE_PROVIDER`) and the task bundle (from `TASK_PROVIDER`) and passes it to `registerTools`. Presence of a bundle member is static typing, not duck-typing; no classes, no `in` checks. A tool domain is registered only when its bundle member exists; a tool errors clearly only when a required scope is unresolvable.
 
-Sub-capabilities (checklist, sub-issues, relationships, labels, milestones) remain optional methods on `IssueProvider`; registration of those tools checks for the method.
+Sub-capabilities (checklist, sub-issues, relationships, labels, milestones) remain optional methods on `IssueProvider`; registration of those tools checks for the method. The same rule applies to `BoardProvider.addIssueToBoard`: only boards with explicit membership (GitHub Projects) implement it; GitLab boards show open issues implicitly and omit the method, so `add_issue_to_board` is not registered for them.
 
 ## Configuration
 
@@ -113,7 +119,7 @@ Nested schema, field-level deep merge of `.mcp-tracker.local.json` over `.mcp-tr
 - A stage is `{key, name}` or `{key, name, id}`. Name-based stages are resolved to native option IDs once per session and cached by the board provider; explicit `id` skips resolution. Magic strings in code are forbidden — automations read `workflow.on`.
 - `codeProvider`, `taskProvider`, and `localTaskDir` may be set in the config file and take precedence over the env vars, so one user-level install behaves per project ([RF-PRV.1](./srs.md#rf-prv1-provider-selection)).
 - `activeIssue` is valid only in `.mcp-tracker.local.json` (state, not config).
-- The flat legacy config (`defaultBase`, `statusLabels`) was never documented and has no alias; the tool parameter surface (`tracker_set_context`) is unchanged.
+- The flat legacy config (`defaultBase`, `statusLabels`) was never documented and has no alias; the tool parameter surface (`tracker_set_context`) is unchanged. GitLab status moves use `workflow.stages` (`id` or `name`) as mutually-exclusive labels.
 
 ## Integration patterns
 
@@ -124,9 +130,13 @@ Nested schema, field-level deep merge of `.mcp-tracker.local.json` over `.mcp-tr
 - `ghApi(path)` → REST via `gh api <path>`, output parsed by a zod schema supplied by the caller.
 - `ghGraphQL(query, variables)` → variables travel as data, never interpolated into the query string ([RNF-SEC.1](./srs.md#rnf-sec1-no-string-interpolation-into-shell-or-graphql)). Scalar variables use `gh api graphql -f query=... -F key=value`; when any variable is a nested object or array (Projects V2 mutation `input` objects), the whole `{query, variables}` body is POSTed as JSON via `gh api graphql --input` on stdin.
 
-Every raw response is validated by a caller-supplied zod schema; a mismatch raises `ParseError` naming the endpoint ([RNF-DOM.1](./srs.md#rnf-dom1-normalized-shared-types)). The `GhRunner` interface (`{ api, graphql }`) is injected into the provider factories; tests substitute a scripted fake fed by fixtures captured from real `gh` output — this is what makes the contract suite runnable without a network. An optional smoke test exercises the real `gh` when one is authenticated, and skips silently otherwise.
+Every raw response is validated by a caller-supplied zod schema; a mismatch raises `ParseError` naming the endpoint ([RNF-DOM.1](./srs.md#rnf-dom1-normalized-shared-types)). The `GhRunner` and `GlabRunner` interfaces are injected into the provider factories; tests substitute a scripted fake fed by fixtures captured from real CLI output — this is what makes the contract suite runnable without a network. Optional smoke tests exercise the real `gh`/`glab` when one is authenticated, and skip silently otherwise.
+
+**GitLab access.** `transport/glab.ts` mirrors `gh.ts`: REST via `glab api <path>` with `--method` and `--raw-field key=value`; GraphQL via `glab api graphql -f query=... -F key=value` for scalars and `--input` on stdin for nested variables. Array fields are sent as repeated `--raw-field key[]=value` flags. Auth is owned by `glab`; this project never reads, stores, or logs tokens.
 
 **Relationship mechanisms (github-projects).** `blocks`/`blocked_by` use the native issue-dependencies API (GA 2025-08): `addBlockedBy`/`removeBlockedBy` GraphQL mutations. `duplicate` posts a `Duplicate of #N` comment — a documented GitHub keyword that produces a native marked-as-duplicate timeline event. `related` posts a cross-reference comment. The tool response names the mechanism used ([RF-ISS.3](./srs.md#rf-iss3-checklist-sub-issues-relationships)).
+
+**Relationship mechanisms (gitlab).** All relationship types create native GitLab issue links via the REST API. GitLab CE only supports `relates_to`, so `blocks`/`blocked_by`/`related`/`duplicate` degrade to `relates_to` links; the tool still reports `native` because issue links are a native GitLab mechanism. Sub-issues use the GraphQL work item hierarchy widget.
 
 **Pagination.** `domains/boards/github-projects.ts` follows `pageInfo.hasNextPage` until exhaustion; no fixed `first: 100` truncation ([RF-BRD.1](./srs.md#rf-brd1-board-tools-github-projects)).
 
@@ -162,10 +172,11 @@ fails | Then the tool response includes a warnings array with the failure; succe
 paths stay clean.
 
 Rule: Workflow stages are ordered and configured | Source: RF-CTX.2
-Given workflow.stages and workflow.on | When create_issue, create_branch, or
-create_pr runs | Then the item moves to the stage key configured for that event
-(e.g. new issues land in 'design'), resolved by name-with-cache or explicit id;
-no stage string is hardcoded.
+Given workflow.stages and workflow.on | When create_issue, create_branch,
+create_pr, merge_pr, or an approving submit_pr_review runs | Then the item
+moves to the stage key configured for that event (e.g. new issues land in
+'design'), resolved by name-with-cache or explicit id; no stage string is
+hardcoded.
 
 Rule: Partial failure keeps what succeeded | Source: RF-ISS.1
 Given create_issue with board context | When the board add fails after the issue was
@@ -210,5 +221,4 @@ Single stdio process spawned by the MCP client. No services, no scaling. CI (to 
 
 ## Deliberately not designed here
 
-- GitLab providers: removed from the tree; the bundle seam is where they plug back in (ADR-002).
-- Retry/rate-limit logic: `gh` already retries sensibly; revisit only if observed.
+- Retry/rate-limit logic: `gh` and `glab` already retry sensibly; revisit only if observed.

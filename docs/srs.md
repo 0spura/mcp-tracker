@@ -17,7 +17,9 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 ### RF-CTX.2: Resolution precedence
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
 * Every context value resolves in this order: explicit tool argument > session value > config file > git derivation.
-* Config is read from `.mcp-tracker.json` (versioned) with field-level overrides from `.mcp-tracker.local.json` (gitignored). The schema is nested: top-level `repo`, `boardId`; `defaults` (`baseBranch`, `mergeMethod`, `reviewers`, `assignee`, `milestone`, `labels`); `workflow` with an ordered `stages` list (`{key, name}` or `{key, name, id}`) and `on` automation triggers (`createIssue`, `createBranch`, `createPr`) referencing stage keys. `activeIssue` is valid only in `.mcp-tracker.local.json`.
+* Config is read from `.mcp-tracker.json` (versioned) with field-level overrides from `.mcp-tracker.local.json` (gitignored). The schema is nested: top-level `repo`, `boardId`; `defaults` (`baseBranch`, `mergeMethod`, `reviewers`, `assignee`, `milestone`, `labels`); `workflow` with an ordered `stages` list (`{key, name}` or `{key, name, id}`) and `on` automation triggers (`createIssue`, `createBranch`, `createPr`, `mergePr`, `reviewApproved`) referencing stage keys. `activeIssue` is valid only in `.mcp-tracker.local.json`.
+* `typeLabels` maps short issue types to project labels; when configured, `create_issue` accepts `type`, lists the valid keys in its description, and rejects unknown types with the valid keys listed.
+* `defaults` fields merge with the local file winning per field, except `labels`, which concatenates versioned + local with dedupe: project labels stay in the versioned file, personal labels (team, own scope) in the gitignored local one, and issues get both.
 * A stage value given as a name is resolved to the provider's native option ID once per session and cached; a stage given with an explicit `id` skips resolution.
 * An invalid JSON config file produces a clear error in the tool response, not silent ignore.
 
@@ -32,7 +34,8 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 ### RF-PRV.1: Provider selection
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
 * Providers are selected with precedence: project config file (`.mcp-tracker.json` fields `codeProvider`, `taskProvider`, `localTaskDir`) > environment (`CODE_PROVIDER`, `TASK_PROVIDER`, `LOCAL_TASK_DIR`) > defaults (`CODE_PROVIDER` = `github`; no task provider).
-* `TASK_PROVIDER` accepts `github-projects` and `local`; when unset everywhere, issue, comment, board, and metadata tools are not registered.
+* `CODE_PROVIDER` accepts `github` and `gitlab`.
+* `TASK_PROVIDER` accepts `github-projects`, `gitlab`, and `local`; when unset everywhere, issue, comment, board, and metadata tools are not registered.
 * `TRACKER_PROVIDER` remains accepted as a backwards-compatible alias for `CODE_PROVIDER` (env only).
 * An unknown provider value fails server startup with an error naming the valid values.
 
@@ -40,7 +43,12 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-PRV.1
 * A provider bundle declares its capabilities by member presence (`code`, `issue`, `board`) plus the scopes it requires (`requires: ('repo' | 'board')[]`); tools are registered only for declared capabilities, and a tool fails with a clear error only when a scope its provider requires is unresolvable.
 * Labels and milestones are optional sub-capability methods on the issue provider, not a separate capability.
-* Capability map: `github` = code (requires repo); `github-projects` = issue + board + checklist + sub-issues + relationships (requires repo; board tools also require board); `local` = issue + checklist + relationships (requires no scope).
+* Capability map:
+  * `github` = code (requires repo).
+  * `gitlab` = code (requires repo).
+  * `github-projects` = issue + board + checklist + sub-issues + relationships (requires repo; board tools also require board).
+  * `gitlab` = issue + board + checklist + sub-issues + relationships + labels + milestones (requires repo; board tools also require board).
+  * `local` = issue + checklist + relationships + labels (requires no scope); milestones are explicitly unsupported.
 * Tools for an undeclared capability are absent from the tool list (not registered-and-failing).
 
 ### RF-PRV.3: Local provider storage
@@ -70,9 +78,9 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 ### RF-PRS.2: PR review tools
 **Priority:** Should Have | **Status:** Accepted | **Dependencies:** RF-PRS.1
 * `get_pr_diff` returns the PR's diff as the reviewer would see it remotely, truncated to a bounded size with the truncation reported.
-* `submit_pr_review` submits a review with an event (`approve`, `request_changes`, `comment`), a body, and optional inline comments referencing `{path, line}` positions from the diff returned by `get_pr_diff`.
+* `submit_pr_review` submits a review with an event (`approve`, `request_changes`, `comment`), a body, and optional inline comments referencing `{path, line}` positions from the diff returned by `get_pr_diff`. When `workflow.on.reviewApproved` is configured, an `approve` moves the active issue to that stage; failures surface as warnings.
 * Inline comment positions refer to the remote diff; comments that cannot be positioned produce a `warnings` entry while the rest of the review is submitted.
-* `merge_pr` applies `default_merge_method` from context; the method is validated against `merge | squash | rebase` before the provider call.
+* `merge_pr` applies `default_merge_method` from context; the method is validated against `merge | squash | rebase` before the provider call. When `workflow.on.mergePr` is configured, a successful merge moves the active issue to that stage; failures surface as warnings.
 * When `statusLabels.review` is configured, `create_pr` moves the active issue to that status; failures surface as warnings.
 * `get_pr_checks` truncates long check logs to a bounded tail (never returns unbounded output).
 
@@ -83,7 +91,8 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 * `list_issues`, `create_issue`, `get_issue`, `update_issue` behave as documented; `get_issue`/`update_issue` use the resolved active issue when `number` is omitted and error clearly when no issue is resolvable.
 * `create_issue` auto-adds the issue to the board when `board_id` is in context.
 * `create_issue` accepts the full desired initial state in one call: optional `blocks`, `blocked_by`, `related` (issue number lists), `duplicate_of`, `parent` (creates as sub-issue), `status` (initial board column), and `fields` (board field values). Post-creation steps (board add, fields, relationships, status) are best-effort; each failure adds a `warnings` entry and never fails the call.
-* `update_issue` supports title, body, labels, assignees, and state; it also accepts batch relationship operations (`add_blocks`, `remove_blocks`, `add_blocked_by`, `remove_blocked_by`, `add_related`, `remove_related`, `duplicate_of`) applied in the same call, with per-operation failures reported in `warnings`.
+* `update_issue` supports title, body, labels, assignees, milestone (title or `null` to clear), and state; it also accepts batch relationship operations (`add_blocks`, `remove_blocks`, `add_blocked_by`, `remove_blocked_by`, `add_related`, `remove_related`, `duplicate_of`) applied in the same call, with per-operation failures reported in `warnings`.
+* The milestone title `"$current"` (config default, session context, or tool argument) resolves to the active/open milestone with the nearest upcoming due date; undated and past-due milestones are skipped and the call errors clearly when none qualifies.
 * If the board add fails after the issue was created, the tool returns the created issue with a `warnings` entry describing the failure; it does not fail the whole call.
 * `update_issue`: a provider that cannot honor a field returns an explicit error instead of silently dropping it.
 
@@ -110,6 +119,7 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 ### RF-BRD.1: Board tools (github-projects)
 **Priority:** Should Have | **Status:** Accepted | **Dependencies:** RF-CTX.1, RF-PRV.2
 * `list_board_items`, `list_board_fields`, `add_issue_to_board`, `set_item_fields` behave as documented and are registered only when the task provider declares the board capability.
+* `add_issue_to_board` is registered only when the board provider implements explicit membership (github-projects). Boards where open issues appear implicitly (gitlab) omit the tool.
 * Board item listing paginates through all items; results are never silently truncated at a fixed page size.
 
 ## RF-MTD: Metadata
