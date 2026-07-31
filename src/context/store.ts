@@ -1,6 +1,6 @@
 import { run } from '../core/process.js';
-import type { TrackerRepo, ItemId } from '../domain/types.js';
-import type { Scope, ScopeKey } from '../domain/scope.js';
+import type { TrackerRepo, ItemId } from '../core/types.js';
+import type { Scope, ScopeKey } from '../core/scope.js';
 import { deriveActiveIssue, deriveRepo, type ProcessRunner } from './git.js';
 import { loadConfig, type TrackerConfig, type MergeMethod } from './config.js';
 

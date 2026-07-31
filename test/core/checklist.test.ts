@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toggleChecklistItem } from '../../src/domain/checklist.js';
+import { toggleChecklistItem } from '../../src/core/checklist.js';
 
 describe('toggleChecklistItem', () => {
   it('toggles an unchecked item to checked', () => {

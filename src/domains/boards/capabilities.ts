@@ -1,5 +1,5 @@
-import type { Scope } from '../../domain/scope.js';
-import type { ProjectItem, ProjectField, ItemId } from '../../domain/types.js';
+import type { Scope } from '../../core/scope.js';
+import type { ProjectItem, ProjectField, ItemId } from '../../core/types.js';
 
 export interface BoardProvider {
   listBoardItems(scope: Scope, boardId: string): Promise<ProjectItem[]>;

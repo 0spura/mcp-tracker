@@ -7,7 +7,7 @@ import type {
   UpdatePROptions,
   PRReview,
   ItemId,
-} from '../../domain/types.js';
+} from '../../core/types.js';
 
 export interface ListPRsOptions {
   state?: 'open' | 'closed' | 'all';

@@ -1,4 +1,4 @@
-import type { Scope } from '../../domain/scope.js';
+import type { Scope } from '../../core/scope.js';
 import type {
   Issue,
   ItemId,
@@ -8,7 +8,7 @@ import type {
   Comment,
   Label,
   Milestone,
-} from '../../domain/types.js';
+} from '../../core/types.js';
 
 export interface ListIssuesOptions {
   state?: 'open' | 'closed' | 'all';
@@ -28,7 +28,11 @@ export interface IssueProvider {
   ): Promise<{ issue: Issue; warnings: string[] }>;
 
   getIssue(scope: Scope, id: ItemId): Promise<Issue>;
-  updateIssue(scope: Scope, id: ItemId, opts: UpdateIssueOptions): Promise<Issue>;
+  updateIssue(
+    scope: Scope,
+    id: ItemId,
+    opts: UpdateIssueOptions
+  ): Promise<{ issue: Issue; warnings: string[] }>;
   setIssueStatus(scope: Scope, id: ItemId, status: string): Promise<void>;
   addIssueComment(scope: Scope, id: ItemId, body: string): Promise<void>;
   listIssueComments(scope: Scope, id: ItemId): Promise<Comment[]>;
