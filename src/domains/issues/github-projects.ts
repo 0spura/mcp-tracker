@@ -14,6 +14,14 @@ import type {
 } from '../../core/types.js';
 import { toggleChecklistItem as toggleChecklistItemInBody } from '../../core/checklist.js';
 import { UnsupportedError } from '../../core/errors.js';
+import {
+  createCaches,
+  addProjectV2ItemByContentId as addIssueToBoard,
+  updateProjectField,
+  setProjectFieldByName,
+  setItemStatus,
+  type BoardFields,
+} from '../boards/github-projects.js';
 
 function repoPath(repo: NonNullable<Scope['repo']>): string {
   return `${repo.owner}/${repo.repo}`;
@@ -118,128 +126,6 @@ function mapRepoMilestone(raw: z.infer<typeof repoMilestoneSchema>): Milestone {
   };
 }
 
-type BoardField =
-  | { kind: 'single_select'; id: string; name: string; options: Map<string, { id: string; name: string }> }
-  | { kind: 'text'; id: string; name: string }
-  | { kind: 'other'; id: string; name: string };
-
-type BoardFields = Map<string, BoardField>;
-
-function createCaches() {
-  const nodeIdCache = new Map<ItemId, Promise<string>>();
-  const fieldCache = new Map<string, Promise<BoardFields>>();
-
-  function getIssueNodeId(
-    gh: GhRunner,
-    repo: NonNullable<Scope['repo']>,
-    id: ItemId
-  ): Promise<string> {
-    const cached = nodeIdCache.get(id);
-    if (cached) return cached;
-
-    const query = `
-      query($owner: String!, $repo: String!, $number: Int!) {
-        repository(owner: $owner, name: $repo) {
-          issue(number: $number) { id }
-        }
-      }`;
-
-    const schema = z.object({
-      repository: z.object({
-        issue: z.object({ id: z.string() }),
-      }),
-    });
-
-    const promise = gh.graphql(
-      query,
-      { owner: repo.owner, repo: repo.repo, number: toIssueNumber(id) },
-      schema
-    );
-    nodeIdCache.set(
-      id,
-      promise.then((data) => data.repository.issue.id)
-    );
-    return nodeIdCache.get(id)!;
-  }
-
-  function primeIssueNodeId(id: ItemId, nodeId: string): void {
-    nodeIdCache.set(id, Promise.resolve(nodeId));
-  }
-
-  async function getBoardFields(gh: GhRunner, boardId: string): Promise<BoardFields> {
-    const cached = fieldCache.get(boardId);
-    if (cached) return cached;
-
-    const query = `
-      query($projectId: ID!) {
-        node(id: $projectId) {
-          ... on ProjectV2 {
-            fields(first: 50) {
-              nodes {
-                __typename
-                ... on ProjectV2SingleSelectField { id name options { id name } }
-                ... on ProjectV2Field { id name }
-              }
-            }
-          }
-        }
-      }`;
-
-    const schema = z.object({
-      node: z.object({
-        fields: z.object({
-          nodes: z.array(
-            z.object({
-              __typename: z.string(),
-              id: z.string(),
-              name: z.string(),
-              options: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
-            })
-          ),
-        }),
-      }),
-    });
-
-    const promise = gh.graphql(query, { projectId: boardId }, schema);
-    fieldCache.set(
-      boardId,
-      promise.then((data) => {
-        const map: BoardFields = new Map();
-        for (const field of data.node.fields.nodes) {
-          if (field.__typename === 'ProjectV2SingleSelectField' && field.options) {
-            const options = new Map<string, { id: string; name: string }>();
-            for (const opt of field.options) {
-              options.set(opt.name.toLowerCase(), opt);
-            }
-            map.set(field.name.toLowerCase(), {
-              kind: 'single_select',
-              id: field.id,
-              name: field.name,
-              options,
-            });
-          } else if (field.__typename === 'ProjectV2Field') {
-            map.set(field.name.toLowerCase(), {
-              kind: 'text',
-              id: field.id,
-              name: field.name,
-            });
-          } else {
-            map.set(field.name.toLowerCase(), {
-              kind: 'other',
-              id: field.id,
-              name: field.name,
-            });
-          }
-        }
-        return map;
-      })
-    );
-    return fieldCache.get(boardId)!;
-  }
-
-  return { getIssueNodeId, primeIssueNodeId, getBoardFields };
-}
-
 async function resolveMilestoneNumber(
   gh: GhRunner,
   repo: NonNullable<Scope['repo']>,
@@ -254,106 +140,6 @@ async function resolveMilestoneNumber(
     throw new Error(`milestone "${title}" not found`);
   }
   return match.number;
-}
-
-async function addIssueToBoard(
-  gh: GhRunner,
-  boardId: string,
-  contentId: string
-): Promise<string> {
-  const mutation = `
-    mutation($projectId: ID!, $contentId: ID!) {
-      addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
-        item { id }
-      }
-    }`;
-
-  const schema = z.object({
-    addProjectV2ItemById: z.object({
-      item: z.object({ id: z.string() }),
-    }),
-  });
-
-  const result = await gh.graphql(mutation, { projectId: boardId, contentId }, schema);
-  return result.addProjectV2ItemById.item.id;
-}
-
-async function updateProjectField(
-  gh: GhRunner,
-  boardId: string,
-  itemId: string,
-  field: BoardField,
-  value: string
-): Promise<void> {
-  let fieldValue: Record<string, unknown>;
-
-  if (field.kind === 'single_select') {
-    const option = field.options.get(value.toLowerCase());
-    if (!option) {
-      const available = Array.from(field.options.values()).map((o) => o.name).join(', ');
-      throw new Error(`option "${value}" not found; available: ${available}`);
-    }
-    fieldValue = { singleSelectOptionId: option.id };
-  } else if (field.kind === 'text') {
-    fieldValue = { text: value };
-  } else {
-    throw new UnsupportedError(`project field "${field.name}" of type "${field.kind}"`);
-  }
-
-  const mutation = `
-    mutation($input: UpdateProjectV2ItemFieldValueInput!) {
-      updateProjectV2ItemFieldValue(input: $input) {
-        projectV2Item { id }
-      }
-    }`;
-
-  const schema = z.object({
-    updateProjectV2ItemFieldValue: z.object({
-      projectV2Item: z.object({ id: z.string() }),
-    }),
-  });
-
-  await gh.graphql(
-    mutation,
-    {
-      input: {
-        projectId: boardId,
-        itemId,
-        fieldId: field.id,
-        value: fieldValue,
-      },
-    },
-    schema
-  );
-}
-
-async function setItemStatus(
-  gh: GhRunner,
-  boardId: string,
-  itemId: string,
-  status: string,
-  fields: BoardFields
-): Promise<void> {
-  const field = fields.get('status');
-  if (!field) {
-    throw new Error('project has no Status field');
-  }
-  await updateProjectField(gh, boardId, itemId, field, status);
-}
-
-async function setProjectFieldByName(
-  gh: GhRunner,
-  boardId: string,
-  itemId: string,
-  fields: BoardFields,
-  name: string,
-  value: string
-): Promise<void> {
-  const field = fields.get(name.toLowerCase());
-  if (!field) {
-    throw new Error(`project field "${name}" not found`);
-  }
-  await updateProjectField(gh, boardId, itemId, field, value);
 }
 
 async function findProjectItemId(
