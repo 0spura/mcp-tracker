@@ -3,20 +3,28 @@ export interface TrackerRepo {
   repo: string;
 }
 
+export type IssueState = 'open' | 'closed';
+
+export type PRState = 'open' | 'closed' | 'merged';
+
+export type RelationshipType = 'blocks' | 'blocked_by' | 'related' | 'duplicate';
+
 export interface Issue {
   number: number;
   title: string;
   body: string;
-  state: string;
+  state: IssueState;
   url: string;
   labels: string[];
+  assignees: string[];
+  milestone?: string | null;
 }
 
 export interface PR {
   number: number;
   title: string;
   body: string;
-  state: string;
+  state: PRState;
   url: string;
   headBranch: string;
   baseBranch: string;
@@ -27,11 +35,8 @@ export interface CheckRun {
   status: string;
   conclusion: string | null;
   url: string;
-  // Populated only for failed checks: the tail of the failing job's log.
   logs?: string | null;
 }
-
-export type RelationshipType = "blocks" | "blocked_by" | "related" | "duplicate";
 
 export interface Label {
   name: string;
@@ -42,7 +47,7 @@ export interface Label {
 export interface Milestone {
   number: number;
   title: string;
-  state: string;
+  state: 'open' | 'closed';
   dueOn: string | null;
 }
 
@@ -50,10 +55,10 @@ export interface ProjectItem {
   id: string;
   status: string | null;
   content: {
-    type: "issue" | "pr";
+    type: 'issue' | 'pr';
     number: number;
     title: string;
-    state: string;
+    state: IssueState | PRState;
     url: string;
   } | null;
 }
@@ -69,6 +74,13 @@ export interface CreateIssueOptions {
   labels?: string[];
   assignees?: string[];
   milestone?: string;
+  blocks?: number[];
+  blocked_by?: number[];
+  related?: number[];
+  duplicate_of?: number;
+  parent?: number;
+  status?: string;
+  fields?: Record<string, string>;
 }
 
 export interface UpdateIssueOptions {
@@ -76,5 +88,26 @@ export interface UpdateIssueOptions {
   body?: string;
   labels?: string[];
   assignees?: string[];
-  state?: "open" | "closed";
+  state?: IssueState;
+  add_blocks?: number[];
+  remove_blocks?: number[];
+  add_blocked_by?: number[];
+  remove_blocked_by?: number[];
+  add_related?: number[];
+  remove_related?: number[];
+  duplicate_of?: number | null;
+}
+
+export interface CreatePROptions {
+  issues?: number[];
+}
+
+export interface UpdatePROptions {
+  title?: string;
+  body?: string;
+  state?: PRState;
+  add_reviewers?: string[];
+  remove_reviewers?: string[];
+  add_assignees?: string[];
+  remove_assignees?: string[];
 }
