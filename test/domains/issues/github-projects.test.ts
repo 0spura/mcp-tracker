@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { createGhRunner } from '../../../src/transport/gh.js';
 import { createGitHubProjectsIssueProvider } from '../../../src/domains/issues/github-projects.js';
+import type { IssueProvider } from '../../../src/domains/issues/capabilities.js';
 import { createFakeGh } from '../../helpers/fake-gh.js';
 import { CliError } from '../../../src/core/errors.js';
 
@@ -10,7 +11,8 @@ const repo = { owner: 'acme', repo: 'widget' };
 function makeProvider(responses: Parameters<typeof createFakeGh>[0]) {
   const fake = createFakeGh(responses);
   const runner = createGhRunner(fake.run);
-  return { provider: createGitHubProjectsIssueProvider(runner), fake };
+  const provider = createGitHubProjectsIssueProvider(runner) as Required<IssueProvider>;
+  return { provider, fake };
 }
 
 function issueFixture(overrides: Record<string, unknown> = {}) {
@@ -35,6 +37,14 @@ function graphqlOk(data: unknown) {
 
 function restInput(call: { input?: string }) {
   return JSON.parse(call.input ?? '{}');
+}
+
+function daysAhead(days: number): string {
+  return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+function daysAgo(days: number): string {
+  return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 }
 
 function graphqlQuery(call: { args: string[]; input?: string }) {
@@ -270,6 +280,79 @@ describe('createGitHubProjectsIssueProvider', () => {
       expect(fake.calls[1].args.join(' ')).toContain('/repos/acme/widget/issues/42/comments');
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain('add related #7 failed');
+    });
+
+    it('resolves milestone by title on update', async () => {
+      const { provider, fake } = makeProvider([
+        {
+          stdout: JSON.stringify([
+            { number: 5, title: 'Sprint 1' },
+            { number: 6, title: 'Sprint 2' },
+          ]),
+        },
+        { stdout: JSON.stringify(issueFixture()) },
+      ]);
+
+      const { issue, warnings } = await provider.updateIssue(
+        { repo },
+        '42',
+        { milestone: 'Sprint 2' }
+      );
+
+      expect(issue.id).toBe('42');
+      expect(warnings).toEqual([]);
+      expect(fake.calls[0].args.join(' ')).toContain('milestones');
+      expect(fake.calls[1].args).toContain('/repos/acme/widget/issues/42');
+      expect(restInput(fake.calls[1])).toEqual({ milestone: 6 });
+    });
+
+    it('clears milestone with null', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(issueFixture()) },
+      ]);
+
+      const { issue } = await provider.updateIssue(
+        { repo },
+        '42',
+        { milestone: null }
+      );
+
+      expect(issue.id).toBe('42');
+      expect(restInput(fake.calls[0])).toEqual({ milestone: null });
+    });
+
+    it('resolves $current to the open milestone with the nearest upcoming due date', async () => {
+      const { provider, fake } = makeProvider([
+        {
+          stdout: JSON.stringify([
+            { number: 5, title: 'Expired', due_on: daysAgo(7) },
+            { number: 6, title: 'Soon', due_on: daysAhead(7) },
+            { number: 7, title: 'Later', due_on: daysAhead(30) },
+            { number: 8, title: 'Undated', due_on: null },
+          ]),
+        },
+        { stdout: JSON.stringify(issueFixture()) },
+      ]);
+
+      const { issue } = await provider.updateIssue(
+        { repo },
+        '42',
+        { milestone: '$current' }
+      );
+
+      expect(issue.id).toBe('42');
+      expect(fake.calls[0].args.join(' ')).toContain('milestones?state=open');
+      expect(restInput(fake.calls[1])).toEqual({ milestone: 6 });
+    });
+
+    it('errors when no open milestone has an upcoming due date', async () => {
+      const { provider } = makeProvider([
+        { stdout: JSON.stringify([{ number: 5, title: 'Expired', due_on: daysAgo(7) }]) },
+      ]);
+
+      await expect(
+        provider.updateIssue({ repo }, '42', { milestone: '$current' })
+      ).rejects.toThrow('no open milestone with an upcoming due date');
     });
 
     it('throws when the primary edit fails', async () => {

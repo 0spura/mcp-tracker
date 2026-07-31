@@ -13,6 +13,7 @@ import type {
   Milestone,
 } from '../../core/types.js';
 import { toggleChecklistItem as toggleChecklistItemInBody } from '../../core/checklist.js';
+import { CURRENT_MILESTONE, pickCurrentMilestone } from '../../core/milestone.js';
 import { UnsupportedError } from '../../core/errors.js';
 import {
   createCaches,
@@ -131,6 +132,23 @@ async function resolveMilestoneNumber(
   repo: NonNullable<Scope['repo']>,
   title: string
 ): Promise<number> {
+  if (title === CURRENT_MILESTONE) {
+    const milestones = await gh.api(
+      `/repos/${repoPath(repo)}/milestones?state=open`,
+      z.array(
+        z.object({
+          number: z.number(),
+          title: z.string(),
+          due_on: z.string().nullable().optional(),
+        })
+      )
+    );
+    const current = pickCurrentMilestone(milestones, (m) => m.due_on);
+    if (!current) {
+      throw new Error('no open milestone with an upcoming due date');
+    }
+    return current.number;
+  }
   const milestones = await gh.api(
     `/repos/${repoPath(repo)}/milestones?state=all`,
     z.array(z.object({ number: z.number(), title: z.string() }))
@@ -360,6 +378,12 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
     if (opts.body !== undefined) input.body = opts.body;
     if (opts.labels !== undefined) input.labels = opts.labels;
     if (opts.assignees !== undefined) input.assignees = opts.assignees;
+    if (opts.milestone !== undefined) {
+      input.milestone =
+        opts.milestone === null
+          ? null
+          : await resolveMilestoneNumber(gh, repo, opts.milestone);
+    }
     if (opts.state !== undefined) input.state = opts.state;
 
     const raw = await gh.api(

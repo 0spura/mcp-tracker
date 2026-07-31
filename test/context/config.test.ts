@@ -90,6 +90,20 @@ describe('loadConfig', () => {
     });
   });
 
+  it('merges typeLabels key by key with the local file winning', async () => {
+    writeFileSync(
+      join(cwd, '.mcp-tracker.json'),
+      JSON.stringify({ typeLabels: { feat: 'feature', fix: 'bug' } })
+    );
+    writeFileSync(
+      join(cwd, '.mcp-tracker.local.json'),
+      JSON.stringify({ typeLabels: { fix: 'defect' } })
+    );
+
+    const config = await loadConfig(cwd);
+    expect(config.typeLabels).toEqual({ feat: 'feature', fix: 'defect' });
+  });
+
   it('allows activeIssue in the local config file', async () => {
     writeFileSync(
       join(cwd, '.mcp-tracker.local.json'),
@@ -152,6 +166,7 @@ describe('loadConfig', () => {
           baseBranch: 'main',
           reviewers: ['alice'],
           assignee: 'bob',
+          labels: ['todo'],
         },
         workflow: {
           stages: [
@@ -193,7 +208,7 @@ describe('loadConfig', () => {
         reviewers: ['alice'],
         assignee: 'bob',
         mergeMethod: 'rebase',
-        labels: ['agent'],
+        labels: ['todo', 'agent'],
       },
       workflow: {
         stages: [

@@ -13,7 +13,7 @@ async function applyStageTrigger(
   issue: IssueProvider | undefined,
   scope: Scope,
   issueId: ItemId | null,
-  event: 'createBranch' | 'createPr',
+  event: 'createBranch' | 'createPr' | 'mergePr' | 'reviewApproved',
   warnings: string[]
 ): Promise<void> {
   if (!issue || issueId === null) return;
@@ -154,7 +154,7 @@ export function registerCodeTools(
 
   server.tool(
     'merge_pr',
-    'Merge a pull request. Applies default_merge_method from context when method is omitted.',
+    'Merge a pull request. Applies default_merge_method from context when method is omitted, and moves the active issue to the workflow.on.mergePr stage when set.',
     {
       number: z.number().int().positive(),
       method: z.enum(['merge', 'squash', 'rebase']).optional(),
@@ -164,7 +164,12 @@ export function registerCodeTools(
       const repo = await repoOf(args.repo);
       const method = args.method ?? (await ctx.resolveDefaultMergeMethod()).value;
       await code.mergePR(repo, args.number, method === 'unset' ? undefined : method);
-      return text(`PR #${args.number} merged`);
+      const resolvedIssue = await ctx.resolveActiveIssue();
+      const issueId = resolvedIssue.value === 'unset' ? null : resolvedIssue.value;
+      const warnings: string[] = [];
+      const scope = await resolveScope(ctx, []);
+      await applyStageTrigger(ctx, issue, scope, issueId, 'mergePr', warnings);
+      return json({ number: args.number, merged: true, warnings });
     }
   );
 
@@ -177,7 +182,7 @@ export function registerCodeTools(
 
   server.tool(
     'submit_pr_review',
-    'Submit a PR review: approve, request_changes, or comment, with a body and optional inline comments. Inline comments use {path, line} positions from get_pr_diff.',
+    'Submit a PR review: approve, request_changes, or comment, with a body and optional inline comments. Inline comments use {path, line} positions from get_pr_diff. An approve moves the active issue to the workflow.on.reviewApproved stage when set.',
     {
       number: z.number().int().positive(),
       event: z.enum(['approve', 'request_changes', 'comment']),
@@ -194,7 +199,14 @@ export function registerCodeTools(
         body: args.body,
         comments: args.comments,
       });
-      return text(`review submitted on PR #${args.number}`);
+      const warnings: string[] = [];
+      if (args.event === 'approve') {
+        const resolvedIssue = await ctx.resolveActiveIssue();
+        const issueId = resolvedIssue.value === 'unset' ? null : resolvedIssue.value;
+        const scope = await resolveScope(ctx, []);
+        await applyStageTrigger(ctx, issue, scope, issueId, 'reviewApproved', warnings);
+      }
+      return json({ number: args.number, reviewed: args.event, warnings });
     }
   );
 }

@@ -97,6 +97,7 @@ export interface UpdateIssueOptions {
   body?: string;
   labels?: string[];
   assignees?: string[];
+  milestone?: string | null;
   state?: IssueState;
   add_blocks?: ItemId[];
   remove_blocks?: ItemId[];
