@@ -34,6 +34,9 @@ const defaultsSchema = z.object({
 });
 
 const versionedShape = {
+  codeProvider: z.string().optional(),
+  taskProvider: z.string().optional(),
+  localTaskDir: z.string().optional(),
   repo: z.string().optional(),
   boardId: z.string().optional(),
   defaults: defaultsSchema.optional(),
@@ -69,6 +72,9 @@ export interface TrackerWorkflow {
 }
 
 export interface TrackerConfig {
+  codeProvider?: string;
+  taskProvider?: string;
+  localTaskDir?: string;
   repo?: string;
   boardId?: string;
   activeIssue?: string;
@@ -130,6 +136,11 @@ async function loadConfigFile<T extends z.ZodTypeAny>(
 function mergeConfigs(base: TrackerConfig, override: TrackerConfig): TrackerConfig {
   const merged: TrackerConfig = {};
 
+  for (const key of ['codeProvider', 'taskProvider', 'localTaskDir'] as const) {
+    if (base[key] !== undefined || override[key] !== undefined) {
+      merged[key] = override[key] ?? base[key];
+    }
+  }
   if (base.repo !== undefined || override.repo !== undefined) {
     merged.repo = override.repo ?? base.repo;
   }

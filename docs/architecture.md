@@ -89,6 +89,8 @@ Nested schema, field-level deep merge of `.mcp-tracker.local.json` over `.mcp-tr
 
 ```json
 {
+  "codeProvider": "github",
+  "taskProvider": "github-projects",
   "repo": "owner/repo",
   "boardId": "1",
   "defaults": {
@@ -109,6 +111,7 @@ Nested schema, field-level deep merge of `.mcp-tracker.local.json` over `.mcp-tr
 ```
 
 - A stage is `{key, name}` or `{key, name, id}`. Name-based stages are resolved to native option IDs once per session and cached by the board provider; explicit `id` skips resolution. Magic strings in code are forbidden — automations read `workflow.on`.
+- `codeProvider`, `taskProvider`, and `localTaskDir` may be set in the config file and take precedence over the env vars, so one user-level install behaves per project ([RF-PRV.1](./srs.md#rf-prv1-provider-selection)).
 - `activeIssue` is valid only in `.mcp-tracker.local.json` (state, not config).
 - The flat legacy config (`defaultBase`, `statusLabels`) was never documented and has no alias; the tool parameter surface (`tracker_set_context`) is unchanged.
 
