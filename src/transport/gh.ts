@@ -14,6 +14,9 @@ export interface GhRunner {
     variables: Record<string, unknown>,
     schema: ZodType<T>
   ): Promise<T>;
+
+  /** Run an arbitrary `gh` subcommand and return the raw stdout. */
+  raw(args: string[]): Promise<string>;
 }
 
 type RunFn = (cmd: string, args: string[], opts?: RunOptions) => Promise<string>;
@@ -23,6 +26,7 @@ export function createGhRunner(runFn: RunFn = runProcess): GhRunner {
     api: (path, schema, opts) => ghApi(path, schema, opts, runFn),
     graphql: (query, variables, schema) =>
       ghGraphql(query, variables, schema, runFn),
+    raw: (args) => runFn('gh', args),
   };
 }
 
