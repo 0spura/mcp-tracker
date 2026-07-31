@@ -65,9 +65,7 @@ export function createLocalIssueProvider(dir: string): IssueProvider {
     body: string,
     opts?: CreateIssueOptions
   ): Promise<{ issue: Issue; warnings: string[] }> {
-    const id = await store.nextId();
-    const meta = emptyMeta(id, title);
-    if (opts?.labels) meta.labels = opts.labels;
+    const meta = emptyMeta('', title);    if (opts?.labels) meta.labels = opts.labels;
     if (opts?.assignees) meta.assignees = opts.assignees;
     if (opts?.milestone) meta.milestone = opts.milestone;
     if (opts?.status) meta.status = opts.status;

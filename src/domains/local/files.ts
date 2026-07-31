@@ -210,9 +210,10 @@ export class IssueStore {
   async create(meta: IssueMeta, body: string): Promise<StoredIssue> {
     return withMutex(resolveInside(this.dir), async () => {
       await this.ensureDir();
-      const filePath = resolveInside(this.dir, fileNameFor(meta.id, meta.title));
-      await atomicWrite(filePath, serialize(meta, body, []));
-      return { meta, body, comments: [], filePath };
+      const withId: IssueMeta = { ...meta, id: await this.nextId() };
+      const filePath = resolveInside(this.dir, fileNameFor(withId.id, withId.title));
+      await atomicWrite(filePath, serialize(withId, body, []));
+      return { meta: withId, body, comments: [], filePath };
     });
   }
 }
