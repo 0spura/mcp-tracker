@@ -1,5 +1,5 @@
 import type { run } from '../core/process.js';
-import type { TrackerRepo, ItemId } from '../domain/types.js';
+import type { TrackerRepo, ItemId } from '../core/types.js';
 
 export type GitDerivationResult<T> = T | 'unset';
 

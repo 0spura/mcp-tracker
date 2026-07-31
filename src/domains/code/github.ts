@@ -10,7 +10,7 @@ import type {
   UpdatePROptions,
   PRReview,
   ItemId,
-} from '../../domain/types.js';
+} from '../../core/types.js';
 import type { CodeProvider, ListPRsOptions } from './capabilities.js';
 import { UnsupportedError } from '../../core/errors.js';
 
