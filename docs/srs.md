@@ -17,7 +17,8 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 ### RF-CTX.2: Resolution precedence
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
 * Every context value resolves in this order: explicit tool argument > session value > config file > git derivation.
-* Config is read from `.mcp-tracker.json` (versioned) with overrides from `.mcp-tracker.local.json` (gitignored).
+* Config is read from `.mcp-tracker.json` (versioned) with field-level overrides from `.mcp-tracker.local.json` (gitignored). The schema is nested: top-level `repo`, `boardId`; `defaults` (`baseBranch`, `mergeMethod`, `reviewers`, `assignee`, `milestone`, `labels`); `workflow` with an ordered `stages` list (`{key, name}` or `{key, name, id}`) and `on` automation triggers (`createIssue`, `createBranch`, `createPr`) referencing stage keys. `activeIssue` is valid only in `.mcp-tracker.local.json`.
+* A stage value given as a name is resolved to the provider's native option ID once per session and cached; a stage given with an explicit `id` skips resolution.
 * An invalid JSON config file produces a clear error in the tool response, not silent ignore.
 
 ### RF-CTX.3: Git derivation
@@ -37,8 +38,9 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 
 ### RF-PRV.2: Capability-based tool registration
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-PRV.1
-* A provider declares its capabilities (code, issue, board, metadata, checklist, sub-issues, relationships); tools are registered only for declared capabilities.
-* Capability map: `github` = code; `github-projects` = issue + board + metadata + checklist + sub-issues + relationships; `local` = issue + metadata + checklist + relationships.
+* A provider bundle declares its capabilities by member presence (`code`, `issue`, `board`) plus the scopes it requires (`requires: ('repo' | 'board')[]`); tools are registered only for declared capabilities, and a tool fails with a clear error only when a scope its provider requires is unresolvable.
+* Labels and milestones are optional sub-capability methods on the issue provider, not a separate capability.
+* Capability map: `github` = code (requires repo); `github-projects` = issue + board + checklist + sub-issues + relationships (requires repo; board tools also require board); `local` = issue + checklist + relationships (requires no scope).
 * Tools for an undeclared capability are absent from the tool list (not registered-and-failing).
 
 ### RF-PRV.3: Local provider storage
@@ -63,7 +65,13 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 * `create_pr`, `update_pr`, `get_pr`, `list_prs`, `get_pr_checks`, `merge_pr` behave as documented in the README.
 * `create_pr` applies `default_base` and `default_reviewers` from context, and injects `Closes #N` into the body when an active issue exists and the body lacks it.
 * `create_pr` accepts an optional `issues` list; each becomes a closing keyword line (`Closes #N`) in the body, covering multiple issues in one call.
-* `update_pr` accepts batch reviewer and assignee changes (`add_reviewers`, `remove_reviewers`, `add_assignees`, `remove_assignees`) in the same call as title/body edits.
+* `update_pr` is the generic PR edit tool: it accepts title, body, state (close/reopen), draft/ready, labels, milestone, and batch reviewer and assignee changes (`add_reviewers`, `remove_reviewers`, `add_assignees`, `remove_assignees`) in one call.
+
+### RF-PRS.2: PR review tools
+**Priority:** Should Have | **Status:** Accepted | **Dependencies:** RF-PRS.1
+* `get_pr_diff` returns the PR's diff as the reviewer would see it remotely, truncated to a bounded size with the truncation reported.
+* `submit_pr_review` submits a review with an event (`approve`, `request_changes`, `comment`), a body, and optional inline comments referencing `{path, line}` positions from the diff returned by `get_pr_diff`.
+* Inline comment positions refer to the remote diff; comments that cannot be positioned produce a `warnings` entry while the rest of the review is submitted.
 * `merge_pr` applies `default_merge_method` from context; the method is validated against `merge | squash | rebase` before the provider call.
 * When `statusLabels.review` is configured, `create_pr` moves the active issue to that status; failures surface as warnings.
 * `get_pr_checks` truncates long check logs to a bounded tail (never returns unbounded output).
@@ -108,7 +116,7 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 
 ### RF-MTD.1: Labels and milestones
 **Priority:** Could Have | **Status:** Accepted | **Dependencies:** RF-PRV.2
-* `list_labels` and `list_milestones` are registered when the task provider declares metadata.
+* `list_labels` and `list_milestones` are registered when the issue provider implements the corresponding optional method.
 * A provider without a real milestone concept returns an explicit "not supported" error instead of fabricated entries.
 
 # 2. Non-Functional Requirements

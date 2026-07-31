@@ -8,6 +8,8 @@ Full rewrite of `src/` preserving the external tool contract ([RNF-CMP.1](./srs.
 
 ## Module map
 
+Organized by domain, not by vendor (ADR-0002, ADR-0003). Each domain holds its interface, its implementations, and its tools.
+
 ```
 src/
   index.ts               entry: stdio transport + createServer()
@@ -17,37 +19,42 @@ src/
                          place child_process is imported)
     errors.ts            TrackerError hierarchy: CliError, TimeoutError, ParseError,
                          ConfigError, UnsupportedError
-  domain/
-    types.ts             normalized shared types (Issue, PR, CheckRun, Label, Milestone,
-                         ProjectItem, ProjectField); states are 'open' | 'closed' | 'merged'
-    capabilities.ts      CodeProvider, IssueProvider, BoardProvider, MetadataProvider
-                         interfaces; IssueProvider keeps optional checklist/relationship/
-                         sub-issue methods
-    checklist.ts         toggleChecklistItem markdown logic (single shared implementation)
   context/
-    store.ts             ContextStore: session values + precedence resolution (async)
-    config.ts            .mcp-tracker.json / .local loading, zod-validated, ConfigError on
-                         invalid JSON
-    git.ts               git derivation via core/process (repo from remote, issue from branch)
-  providers/
-    github/
-      gh.ts              gh runner: REST (gh api) and GraphQL (gh api graphql -f query -F var)
-                         built on core/process; raw responses validated with zod schemas
-      code.ts            CodeProvider implementation + mappers to domain types
-    github-projects/
-      issues.ts          IssueProvider implementation
-      boards.ts          BoardProvider implementation (paginates all items)
-      metadata.ts        MetadataProvider implementation
-      mappers.ts         raw → domain normalization (state casing, etc.)
+    store.ts             ContextStore: session values + precedence resolution (async);
+                         resolves Scope and validates bundle.requires
+    config.ts            nested .mcp-tracker.json / .local schema, zod-validated,
+                         ConfigError on invalid JSON
+    git.ts               git derivation via core/process (repo from remote, item id from
+                         branch: both 42 and PROJ-123 shapes)
+  domain/
+    types.ts             normalized shared types; identifiers are opaque strings (ItemId);
+                         states are 'open' | 'closed' | 'merged'
+    scope.ts             Scope { repo?, boardId? } and ScopeKey
+    checklist.ts         toggleChecklistItem markdown logic (single shared implementation)
+  domains/
+    code/
+      capabilities.ts    CodeProvider interface
+      tools.ts           create_branch + PR tools (incl. get_pr_diff, submit_pr_review)
+      github.ts          implementation over gh + mappers
+    issues/
+      capabilities.ts    IssueProvider interface (includes optional listLabels/
+                         listMilestones and checklist/relationship/sub-issue methods)
+      tools.ts           issue + metadata tools
+      github-projects.ts implementation over gh + mappers
+      local.ts           implementation over local/files.ts
+    boards/
+      capabilities.ts    BoardProvider interface
+      tools.ts           board tools
+      github-projects.ts implementation (paginates all items, caches field/option IDs)
+    comments/
+      tools.ts           comment tools (route to code or issue provider)
     local/
       files.ts           markdown + frontmatter parse/serialize (symmetric escaping, rename
-                         on title change)
-      issues.ts          IssueProvider implementation
-      metadata.ts        MetadataProvider; milestones → UnsupportedError
-  tools/
-    register.ts          registerTools(server, bundle, context): one registration function
-                         per tool domain, each gated on bundle member presence
-    context.ts  branches.ts  prs.ts  issues.ts  comments.ts  boards.ts  metadata.ts
+                         on title change, per-file mutex, atomic write)
+  transport/
+    gh.ts                GhRunner: REST (gh api) and GraphQL (-F scalars, --input for
+                         nested variables); raw responses validated with caller-supplied
+                         zod schemas
 test/
   contract/issue-provider.ts   shared IssueProvider contract suite
   helpers/fake-gh.ts           scripted GhRunner fake
@@ -55,30 +62,61 @@ test/
 
 ## Provider composition
 
-The central seam. Each provider module exports a factory returning a **bundle** — a plain object whose present members are the declared capabilities ([RF-PRV.2](./srs.md#rf-prv2-capability-based-tool-registration)):
+The central seam. Each provider factory returns a **bundle** — present members are the declared capabilities, and `requires` declares the scopes the provider needs ([RF-PRV.2](./srs.md#rf-prv2-capability-based-tool-registration), ADR-0003):
 
 ```ts
+type ScopeKey = 'repo' | 'board';
+
 interface ProviderBundle {
+  requires: ScopeKey[];
   code?: CodeProvider;
   issue?: IssueProvider;
   board?: BoardProvider;
-  metadata?: MetadataProvider;
 }
 ```
 
-- `createGitHubProvider(gh)` → `{ code }`
-- `createGitHubProjectsProvider(gh)` → `{ issue, board, metadata }`
-- `createLocalProvider(dir)` → `{ issue, metadata }`
+- `createGitHubProvider(gh)` → `{ requires: ['repo'], code }`
+- `createGitHubProjectsProvider(gh)` → `{ requires: ['repo'], issue, board }`
+- `createLocalProvider(dir)` → `{ requires: [], issue }`
 
-`server.ts` merges the code bundle (from `CODE_PROVIDER`) and the task bundle (from `TASK_PROVIDER`) and passes it to `registerTools`. Presence of a bundle member is static typing, not duck-typing; no classes, no `in` checks. A tool domain is registered only when its bundle member exists.
+`server.ts` merges the code bundle (from `CODE_PROVIDER`) and the task bundle (from `TASK_PROVIDER`) and passes it to `registerTools`. Presence of a bundle member is static typing, not duck-typing; no classes, no `in` checks. A tool domain is registered only when its bundle member exists; a tool errors clearly only when a required scope is unresolvable.
 
-Sub-capabilities (checklist, sub-issues, relationships) remain optional methods on `IssueProvider`; registration of those tools checks for the method, as the SRS capability map requires.
+Sub-capabilities (checklist, sub-issues, relationships, labels, milestones) remain optional methods on `IssueProvider`; registration of those tools checks for the method.
+
+## Configuration
+
+Nested schema, field-level deep merge of `.mcp-tracker.local.json` over `.mcp-tracker.json` ([RF-CTX.2](./srs.md#rf-ctx2-resolution-precedence)):
+
+```json
+{
+  "repo": "owner/repo",
+  "boardId": "1",
+  "defaults": {
+    "baseBranch": "main", "mergeMethod": "squash",
+    "reviewers": ["ana"], "assignee": "ana",
+    "milestone": "Sprint 12", "labels": ["agent"]
+  },
+  "workflow": {
+    "stages": [
+      { "key": "design", "name": "In design" },
+      { "key": "doing",  "name": "Doing" },
+      { "key": "review", "name": "In Review" },
+      { "key": "done",   "name": "Done" }
+    ],
+    "on": { "createIssue": "design", "createBranch": "doing", "createPr": "review" }
+  }
+}
+```
+
+- A stage is `{key, name}` or `{key, name, id}`. Name-based stages are resolved to native option IDs once per session and cached by the board provider; explicit `id` skips resolution. Magic strings in code are forbidden — automations read `workflow.on`.
+- `activeIssue` is valid only in `.mcp-tracker.local.json` (state, not config).
+- The flat legacy config (`defaultBase`, `statusLabels`) was never documented and has no alias; the tool parameter surface (`tracker_set_context`) is unchanged.
 
 ## Integration patterns
 
 **CLI execution (deep module).** `core/process.run(cmd, args, opts)` is the only import site of `child_process`. It takes an argument array (never a shell string), an optional stdin string, and a timeout (default 30s, ≤ 60s per [RNF-ASY.2](./srs.md#rnf-asy2-timeouts)), and returns stdout. Failures map to `CliError` (non-zero exit, carries stderr), `TimeoutError` (kill on deadline), never raw Node errors. Callers never see `execFile`.
 
-**GitHub access.** `providers/github/gh.ts` exposes two functions over `run()`:
+**GitHub access.** `transport/gh.ts` exposes two functions over `run()`:
 
 - `ghApi(path)` → REST via `gh api <path>`, output parsed by a zod schema supplied by the caller.
 - `ghGraphQL(query, variables)` → variables travel as data, never interpolated into the query string ([RNF-SEC.1](./srs.md#rnf-sec1-no-string-interpolation-into-shell-or-graphql)). Scalar variables use `gh api graphql -f query=... -F key=value`; when any variable is a nested object or array (Projects V2 mutation `input` objects), the whole `{query, variables}` body is POSTed as JSON via `gh api graphql --input` on stdin.
@@ -87,7 +125,9 @@ Every raw response is validated by a caller-supplied zod schema; a mismatch rais
 
 **Relationship mechanisms (github-projects).** `blocks`/`blocked_by` use the native issue-dependencies API (GA 2025-08): `addBlockedBy`/`removeBlockedBy` GraphQL mutations. `duplicate` posts a `Duplicate of #N` comment — a documented GitHub keyword that produces a native marked-as-duplicate timeline event. `related` posts a cross-reference comment. The tool response names the mechanism used ([RF-ISS.3](./srs.md#rf-iss3-checklist-sub-issues-relationships)).
 
-**Pagination.** `boards.ts` follows `pageInfo.hasNextPage` until exhaustion; no fixed `first: 100` truncation ([RF-BRD.1](./srs.md#rf-brd1-board-tools-github-projects)).
+**Pagination.** `domains/boards/github-projects.ts` follows `pageInfo.hasNextPage` until exhaustion; no fixed `first: 100` truncation ([RF-BRD.1](./srs.md#rf-brd1-board-tools-github-projects)).
+
+**PR review (github).** `get_pr_diff` runs `gh pr diff <n>` and truncates to a bounded size, reporting truncation. `submit_pr_review` POSTs `/repos/{owner}/{repo}/pulls/{n}/reviews` via `gh api --input` with `{event, body, comments[]}`; inline comments use `{path, line, side}` positions taken from the diff ([RF-PRS.2](./srs.md#rf-prs2-pr-review-tools)).
 
 **Local storage.** Markdown file per issue: YAML frontmatter (title, state, labels, assignees, milestone, relationships) + body + `## Comments` section. Serializer and parser are inverse functions covered by round-trip tests, including quotes in titles ([RF-PRV.3](./srs.md#rf-prv3-local-provider-storage)). Title change renames the file to keep the slug in sync. All writes go through a per-file async mutex and an atomic write (temp file + rename): genuine async reintroduces interleaving that the old synchronous code got for free, and two concurrent tool calls must never corrupt a file.
 
@@ -114,8 +154,15 @@ board Status field (of the context board, never items[0]), local writes frontmat
 tool contract carries only the status string.
 
 Rule: Automation failures are visible | Source: RF-BRN.1, RF-PRS.1
-Given statusLabels configured | When a best-effort status automation fails | Then the
-tool response includes a warnings array with the failure; success paths stay clean.
+Given workflow.on maps an event to a stage | When a best-effort status automation
+fails | Then the tool response includes a warnings array with the failure; success
+paths stay clean.
+
+Rule: Workflow stages are ordered and configured | Source: RF-CTX.2
+Given workflow.stages and workflow.on | When create_issue, create_branch, or
+create_pr runs | Then the item moves to the stage key configured for that event
+(e.g. new issues land in 'design'), resolved by name-with-cache or explicit id;
+no stage string is hardcoded.
 
 Rule: Partial failure keeps what succeeded | Source: RF-ISS.1
 Given create_issue with board context | When the board add fails after the issue was
