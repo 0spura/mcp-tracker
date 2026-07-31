@@ -1,34 +1,39 @@
 # mcp-tracker
 
-MCP server for interacting with code hosts and issue trackers from Claude Code.
+MCP server for interacting with code hosts and issue trackers from agentic coding tools. Everything goes through the `gh` CLI (which owns authentication) and `git`, fully asynchronously.
+
+"Issue" means the generic work item: a GitHub issue, a card, a ticket. Providers map the concept to their native model.
 
 ## Architecture
 
-Two independent provider types, both optional depending on what you need:
+Two independent provider types, selected by environment:
 
 ```
-CODE_PROVIDER   github | gitlab                          # branches, PRs, CI checks
-TASK_PROVIDER   github-projects | gitlab-boards | local  # issues, comments, metadata
+CODE_PROVIDER   github                              # branches, PRs, CI checks, reviews
+TASK_PROVIDER   github-projects | local             # issues, comments, boards, metadata
 ```
 
 `CODE_PROVIDER` defaults to `github`. `TASK_PROVIDER` is optional — when unset, issue and board tools are not registered.
 
-Each provider type maps to a focused interface:
+Each provider declares a bundle of capabilities and the scopes it needs:
 
-| Interface | Methods | Registered when |
+| Bundle member | Tools | Registered when |
 |---|---|---|
-| `CodeProvider` | createBranch, createPR, updatePR, getPR, listPRs, mergePR, getPRChecks, requestReviewers, addPRComment, listPRComments | always |
-| `IssueProvider` | listIssues, createIssue, getIssue, updateIssue, setIssueStatus, addIssueComment, listIssueComments | TASK_PROVIDER is set |
-| `BoardProvider` | listBoardItems, listBoardFields, addIssueToBoard, setItemFields | TASK_PROVIDER supports boards (github-projects only) |
-| `MetadataProvider` | listLabels, listMilestones | TASK_PROVIDER is set |
+| `code` | branch, PR, review tools | always |
+| `issue` | issue, comment, label, milestone tools | TASK_PROVIDER is set |
+| `board` | board tools | TASK_PROVIDER supports boards (github-projects only) |
 
-Optional sub-capabilities on `IssueProvider` (only registered if the provider implements them):
+Optional sub-capabilities on the issue provider (tools registered only when implemented):
 
-| Method | github-projects | gitlab-boards | local |
-|---|---|---|---|
-| `toggleChecklistItem` | ✓ | ✓ | ✓ |
-| `setRelationship` | ✓ | ✓ | ✓ |
-| `addSubIssue` / `listSubIssues` | ✓ | — | — |
+| Method | github-projects | local |
+|---|---|---|
+| `toggleChecklistItem` | ✓ | ✓ |
+| `setRelationship` | ✓ | ✓ |
+| `addSubIssue` / `listSubIssues` | ✓ | ✓ |
+| `listLabels` | ✓ | ✓ |
+| `listMilestones` | ✓ | errors explicitly (unsupported) |
+
+Relationship mechanisms on github-projects: `blocks`/`blocked_by` use the native issue-dependencies API; `duplicate` posts a `Duplicate of #N` comment (documented GitHub keyword); `related` posts a cross-reference comment. The tool response names the mechanism used.
 
 ## Configuration
 
@@ -63,6 +68,42 @@ For local file-based tracking (no external account needed):
 
 `TRACKER_PROVIDER` is a backwards-compatible alias for `CODE_PROVIDER`.
 
+### Config file
+
+`.mcp-tracker.json` (versioned) with field-level overrides from `.mcp-tracker.local.json` (gitignored):
+
+```json
+{
+  "repo": "owner/repo",
+  "boardId": "1",
+  "defaults": {
+    "baseBranch": "main",
+    "mergeMethod": "squash",
+    "reviewers": ["ana"],
+    "assignee": "ana",
+    "milestone": "Sprint 12",
+    "labels": ["agent"]
+  },
+  "workflow": {
+    "stages": [
+      { "key": "design", "name": "In design" },
+      { "key": "doing",  "name": "Doing" },
+      { "key": "review", "name": "In Review" },
+      { "key": "done",   "name": "Done" }
+    ],
+    "on": {
+      "createIssue": "design",
+      "createBranch": "doing",
+      "createPr": "review"
+    }
+  }
+}
+```
+
+- `workflow.stages` is an ordered list of status columns. A stage is `{key, name}` (resolved to native IDs once per session, cached) or `{key, name, id}` (uses the native option ID directly).
+- `workflow.on` maps events to stage keys: new issues land in `createIssue`'s stage, branch creation moves the issue to `createBranch`'s, PR creation to `createPr`'s.
+- `activeIssue` is valid only in `.mcp-tracker.local.json` (state, not config).
+
 ## Context
 
 Set once per session — tools pick it up automatically:
@@ -79,6 +120,8 @@ tracker_set_context
   default_milestone  milestone title
 ```
 
+Resolution precedence for every value: explicit argument > session > config file > git derivation. `tracker_get_context` shows each value with its source.
+
 When `active_issue` is set, these tools use it without requiring an explicit number:
 `get_issue`, `update_issue`, `move_issue_status`, `toggle_checklist_item`, `add_issue_comment`, `list_comments` (issue type), `add_sub_issue` (parent), `list_sub_issues`, `set_issue_relationship`.
 
@@ -88,52 +131,56 @@ When `active_issue` is set, these tools use it without requiring an explicit num
 | Tool | Description |
 |---|---|
 | `tracker_set_context` | Set repo, board, active issue, and defaults |
-| `tracker_get_context` | Show current context |
+| `tracker_get_context` | Show current context with per-value source |
 
-### Branches (CodeProvider)
+### Branches
 | Tool | Description |
 |---|---|
-| `create_branch` | Create branch off default; optionally link to issue |
+| `create_branch` | Create branch off default; linked to issue and idempotent when an issue is resolvable |
 
-### Pull Requests (CodeProvider)
+### Pull Requests
 | Tool | Description |
 |---|---|
-| `create_pr` | Create PR; applies default_base and default_reviewers from context |
-| `update_pr` | Update title or body |
+| `create_pr` | Create PR; applies defaults, appends `Closes #N` for active/listed issues |
+| `update_pr` | Generic edit: title, body, state, draft, labels, milestone, reviewer/assignee batches |
 | `get_pr` | Get PR details |
 | `list_prs` | List PRs by state |
-| `get_pr_checks` | Get CI check results |
+| `get_pr_checks` | Get CI check results (failing logs truncated to a bounded tail) |
 | `merge_pr` | Merge PR; applies default_merge_method from context |
+| `get_pr_diff` | Get the remote diff; positions for inline review comments |
+| `submit_pr_review` | Submit approve/request_changes/comment review with optional inline comments |
 
-### Issues (IssueProvider)
+### Issues
 | Tool | Description |
 |---|---|
 | `list_issues` | List issues by state, labels, assignee |
-| `create_issue` | Create issue; auto-adds to board when board context is set |
+| `create_issue` | Create with full initial state: labels, assignees, milestone, status, board fields, relationships, parent |
 | `get_issue` | Get issue details |
-| `update_issue` | Update title, body, labels, assignees, or state |
-| `move_issue_status` | Move issue to a status column |
+| `update_issue` | Update title, body, labels, assignees, state, and batch relationship ops |
+| `move_issue_status` | Move issue to a status column (stage key or name) |
 | `toggle_checklist_item` | Mark/unmark a checklist item by partial text |
-| `add_sub_issue` | Add child issue to parent (GitHub only) |
-| `list_sub_issues` | List child issues (GitHub only) |
-| `set_issue_relationship` | Set blocks/blocked_by/related/duplicate relationship |
+| `add_sub_issue` | Add child issue to parent |
+| `list_sub_issues` | List child issues |
+| `set_issue_relationship` | Set blocks/blocked_by/related/duplicate; response names the mechanism used |
 
-### Comments (CodeProvider + IssueProvider)
+Composite creates and updates apply the primary change first and every secondary change best-effort; failures come back in a `warnings` array, never silently.
+
+### Comments
 | Tool | Description |
 |---|---|
 | `add_issue_comment` | Add comment to issue |
 | `add_pr_comment` | Add comment to PR |
 | `list_comments` | List comments on issue or PR |
 
-### Board (BoardProvider — github-projects only)
+### Board (github-projects only)
 | Tool | Description |
 |---|---|
-| `list_board_items` | List all items on the board |
+| `list_board_items` | List all items on the board (full pagination) |
 | `list_board_fields` | List custom fields and options |
 | `add_issue_to_board` | Add issue to board; returns item ID |
 | `set_item_fields` | Set field values (Size, Priority, Sprint, etc.) |
 
-### Metadata (MetadataProvider)
+### Metadata
 | Tool | Description |
 |---|---|
 | `list_labels` | List repository labels |
@@ -152,24 +199,34 @@ move_issue_status { status: "Done" }           # closes the loop
 
 The issue body (Goal, Acceptance, Verification) is the goal spec. The checklist is the state. Parent/child relationships are the execution graph.
 
+## Development
+
+```
+npm run build     # tsc
+npm test          # vitest + typecheck
+```
+
 ## Source layout
+
+Organized by domain: each domain holds its interface, implementations, and tools.
 
 ```
 src/
-  interfaces/
-    code.ts          CodeProvider
-    issue.ts         IssueProvider + ListIssuesOptions
-    board.ts         BoardProvider
-    metadata.ts      MetadataProvider
-    types.ts         shared types
-  providers/
-    github/          CodeProvider — gh CLI + GraphQL
-    github-projects/ IssueProvider + BoardProvider + MetadataProvider — gh CLI + GraphQL
-    gitlab/          CodeProvider — glab CLI
-    gitlab-boards/   IssueProvider + MetadataProvider — glab CLI
-    local/           IssueProvider + MetadataProvider — markdown files in .tasks/
-  tools/
-    branches.ts, prs.ts, issues.ts, comments.ts, boards.ts, metadata.ts, context.ts
-  context.ts         ContextStore
-  server.ts          provider resolution + tool registration
+  core/          process (async execFile, the only child_process site), errors,
+                 types, scope, bundle, checklist
+  context/       store, config (nested schema), git derivation, context tools
+  transport/     gh.ts — validated REST/GraphQL runner (injectable GhRunner)
+  domains/
+    code/        CodeProvider + github impl + branch/PR/review tools
+    issues/      IssueProvider + github-projects and local impls + tools
+    boards/      BoardProvider + github-projects impl + tools
+    comments/    comment tools
+    local/       markdown file storage engine
+  server.ts      provider resolution + tool registration
+  index.ts       stdio entry
+test/
+  contract/      shared IssueProvider contract suite
+  helpers/       scripted GhRunner fake
 ```
+
+Design docs live in `docs/` (vision, SRS, architecture, ADRs).
