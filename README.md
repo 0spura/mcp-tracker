@@ -68,6 +68,18 @@ For local file-based tracking (no external account needed):
 
 `TRACKER_PROVIDER` is a backwards-compatible alias for `CODE_PROVIDER`.
 
+The server is installed once at user level; behavior is configured per project. The config file fields `codeProvider`, `taskProvider`, and `localTaskDir` override the env vars, so each project picks its own providers:
+
+```json
+{
+  "codeProvider": "github",
+  "taskProvider": "local",
+  "localTaskDir": ".tasks"
+}
+```
+
+Precedence: project config file > env > default. Cross-project work needs no cwd change: `gh` operates remotely, so `tracker_set_context { repo: "owner/other-project" }` points every issue/PR tool at the other repo.
+
 ### Config file
 
 `.mcp-tracker.json` (versioned) with field-level overrides from `.mcp-tracker.local.json` (gitignored):

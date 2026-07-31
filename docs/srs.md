@@ -29,11 +29,11 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 
 ## RF-PRV: Provider model
 
-### RF-PRV.1: Provider selection via environment
+### RF-PRV.1: Provider selection
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
-* `CODE_PROVIDER` accepts `github` and defaults to `github`.
-* `TASK_PROVIDER` accepts `github-projects` and `local`; when unset, issue, comment, board, and metadata tools are not registered.
-* `TRACKER_PROVIDER` remains accepted as a backwards-compatible alias for `CODE_PROVIDER`.
+* Providers are selected with precedence: project config file (`.mcp-tracker.json` fields `codeProvider`, `taskProvider`, `localTaskDir`) > environment (`CODE_PROVIDER`, `TASK_PROVIDER`, `LOCAL_TASK_DIR`) > defaults (`CODE_PROVIDER` = `github`; no task provider).
+* `TASK_PROVIDER` accepts `github-projects` and `local`; when unset everywhere, issue, comment, board, and metadata tools are not registered.
+* `TRACKER_PROVIDER` remains accepted as a backwards-compatible alias for `CODE_PROVIDER` (env only).
 * An unknown provider value fails server startup with an error naming the valid values.
 
 ### RF-PRV.2: Capability-based tool registration
