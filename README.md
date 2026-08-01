@@ -1,51 +1,27 @@
 # mcp-tracker
 
-MCP server for interacting with code hosts and issue trackers from agentic coding tools. Everything goes through the `gh` CLI (which owns authentication) and `git`, fully asynchronously.
+MCP server for coding agents to interact with code hosts and issue trackers. Install it once for your user, then configure behavior per project.
 
-"Issue" means the generic work item: a GitHub issue, a card, a ticket. Providers map the concept to their native model.
+## How it works
 
-## Architecture
+- The server runs as a stdio process started by your MCP client (Cursor, Claude Code, etc).
+- All GitHub/GitLab communication goes through the `gh`/`glab` CLIs, which own authentication. This project never reads or stores tokens.
+- Install once at user level: point your MCP client at `dist/index.js`.
+- Behavior is defined per project via `.mcp-tracker.json` (versioned) and `.mcp-tracker.local.json` (gitignored).
+- Value precedence: explicit tool argument > session (`tracker_set_context`) > project config > git derivation.
 
-Two independent provider types, selected by environment:
+## Setup
 
-```
-CODE_PROVIDER   github | gitlab                    # branches, PRs, CI checks, reviews
-TASK_PROVIDER   github-projects | gitlab | local   # issues, comments, boards, metadata
-```
+### 1. External dependencies
 
-`CODE_PROVIDER` defaults to `github`. `TASK_PROVIDER` is optional — when unset, issue and board tools are not registered.
+- Node.js ≥ 18
+- `gh` CLI authenticated (for GitHub providers)
+- `glab` CLI authenticated (for GitLab providers, optional)
+- `git`
 
-Each provider declares a bundle of capabilities and the scopes it needs:
+### 2. Configure the MCP client at user level
 
-| Bundle member | Tools | Registered when |
-|---|---|---|
-| `code` | branch, PR, review tools | always |
-| `issue` | issue, comment, label, milestone tools | TASK_PROVIDER is set |
-| `board` | board tools | TASK_PROVIDER supports boards (github-projects, gitlab) |
-
-Optional sub-capabilities on the issue provider (tools registered only when implemented):
-
-| Method | github-projects | gitlab | local |
-|---|---|---|---|
-| `toggleChecklistItem` | ✓ | ✓ | ✓ |
-| `setRelationship` | ✓ | ✓ (CE degrades to `relates_to`) | ✓ |
-| `addSubIssue` / `listSubIssues` | ✓ | ✓ (GraphQL work items) | ✓ |
-| `listLabels` | ✓ | ✓ | ✓ |
-| `listMilestones` | ✓ | ✓ | errors explicitly (unsupported) |
-
-Optional sub-capabilities on the board provider:
-
-| Method | github-projects | gitlab |
-|---|---|---|
-| `addIssueToBoard` | ✓ (explicit project membership) | omitted: open issues appear on GitLab boards implicitly, so `add_issue_to_board` is not registered |
-
-Relationship mechanisms on github-projects: `blocks`/`blocked_by` use the native issue-dependencies API; `duplicate` posts a `Duplicate of #N` comment (documented GitHub keyword); `related` posts a cross-reference comment. The tool response names the mechanism used.
-
-On gitlab: `blocks`/`blocked_by`/`related`/`duplicate` all create GitLab issue links. GitLab CE only supports `relates_to`, so every relationship type degrades to `relates_to`; the tool still reports `native` because issue links are a native GitLab mechanism. Issue status moves (via `move_issue_status` and board tools) are implemented as mutually-exclusive labels derived from `workflow.stages` (`id` or `name`) for the issue provider, and from board list labels for the board provider.
-
-## Configuration
-
-Set environment variables in your MCP client config:
+Minimal example:
 
 ```json
 {
@@ -53,60 +29,56 @@ Set environment variables in your MCP client config:
     "tracker": {
       "command": "node",
       "args": ["/path/to/mcp-tracker/dist/index.js"],
-      "env": {
-        "CODE_PROVIDER": "github",
-        "TASK_PROVIDER": "github-projects"
-      }
+      "env": {}
     }
   }
 }
 ```
 
-For local file-based tracking (no external account needed):
+> Do not set `CODE_PROVIDER`/`TASK_PROVIDER` in the client env unless you want a global fallback. Each project picks its own providers in `.mcp-tracker.json`.
 
-```json
-{
-  "env": {
-    "CODE_PROVIDER": "github",
-    "TASK_PROVIDER": "local",
-    "LOCAL_TASK_DIR": ".tasks"
-  }
-}
-```
+### 3. Configure per project
 
-For GitLab (uses the `glab` CLI for authentication and API access):
+Create `.mcp-tracker.json` at the repo root. See the sections below for each field.
 
-```json
-{
-  "env": {
-    "CODE_PROVIDER": "gitlab",
-    "TASK_PROVIDER": "gitlab"
-  }
-}
-```
+## Project configuration
 
-`TRACKER_PROVIDER` is a backwards-compatible alias for `CODE_PROVIDER`.
+`.mcp-tracker.json` and `.mcp-tracker.local.json` share the same schema. The local file overrides the versioned one field by field, with one exception: `defaults.labels` is concatenated and deduplicated across both files.
 
-The server is installed once at user level; behavior is configured per project. The config file fields `codeProvider`, `taskProvider`, and `localTaskDir` override the env vars, so each project picks its own providers:
+### Providers
 
 ```json
 {
   "codeProvider": "github",
-  "taskProvider": "local",
+  "taskProvider": "github-projects",
   "localTaskDir": ".tasks"
 }
 ```
 
-Precedence: project config file > env > default. Cross-project work needs no cwd change: `gh` operates remotely, so `tracker_set_context { repo: "owner/other-project" }` points every issue/PR tool at the other repo.
+- `codeProvider`: `github` | `gitlab`
+- `taskProvider`: `github-projects` | `gitlab` | `local`
+- `localTaskDir`: directory for local tasks when `taskProvider` is `local` (default: `.tasks`)
 
-### Config file
+Use `taskProvider: "local"` for file-based tracking with markdown files and no external account.
 
-`.mcp-tracker.json` (versioned) with field-level overrides from `.mcp-tracker.local.json` (gitignored):
+### Repo and board
 
 ```json
 {
   "repo": "owner/repo",
-  "boardId": "1",
+  "boardId": "1"
+}
+```
+
+- `repo`: `owner/repo`. Optional when derived from the git remote.
+- `boardId`: GitHub Projects V2 number. Only needed for boards.
+
+### Defaults
+
+Values applied automatically when a tool does not receive the argument explicitly:
+
+```json
+{
   "defaults": {
     "baseBranch": "main",
     "mergeMethod": "squash",
@@ -114,11 +86,33 @@ Precedence: project config file > env > default. Cross-project work needs no cwd
     "assignee": "ana",
     "milestone": "Sprint 12",
     "labels": ["agent"]
-  },
+  }
+}
+```
+
+- `mergeMethod`: `merge` | `squash` | `rebase`
+- `milestone`: use `"$current"` to dynamically resolve to the active milestone with the nearest upcoming due date
+- `labels`: labels applied on issue/PR creation
+
+### Type labels
+
+```json
+{
   "typeLabels": {
-    "feat": "🚧 feature",
-    "fix": "🚧 fix"
-  },
+    "feat": "feature",
+    "fix": "bug"
+  }
+}
+```
+
+When configured, `create_issue` accepts a `type` argument. The mapped label is added alongside `defaults.labels`. Unknown types return an error listing the valid keys.
+
+### Workflow
+
+Defines status columns and the automations that move issues between them:
+
+```json
+{
   "workflow": {
     "stages": [
       { "key": "design", "name": "In design" },
@@ -129,143 +123,100 @@ Precedence: project config file > env > default. Cross-project work needs no cwd
     "on": {
       "createIssue": "design",
       "createBranch": "doing",
-      "createPr": "review"
+      "createPr": "review",
+      "reviewApproved": "done",
+      "mergePr": "done"
     }
   }
 }
 ```
 
-- `workflow.stages` is an ordered list of status columns. A stage is `{key, name}` (resolved to native IDs once per session, cached) or `{key, name, id}` (uses the native option ID directly).
-- `workflow.on` maps events to stage keys: new issues land in `createIssue`'s stage, branch creation moves the issue to `createBranch`'s, PR creation to `createPr`'s, a PR approval to `reviewApproved`'s, and a successful merge moves the active issue to `mergePr`'s.
-- `activeIssue` is valid only in `.mcp-tracker.local.json` (state, not config).
-- A milestone title of `"$current"` (config default, session context, or tool argument) resolves dynamically to the active milestone with the nearest upcoming due date; undated and past-due milestones are skipped and the call errors clearly when none qualifies.
-- `typeLabels` maps short issue types to the project's labels. When configured, `create_issue` accepts a `type` argument (the valid keys are listed in the tool description); the mapped label is added alongside `labels`, and an unknown type errors with the valid keys.
-- `defaults` fields merge with `.mcp-tracker.local.json` winning per field, except `labels`, which concatenates both files (deduped) — keep project labels in the versioned file and personal ones (your team, your scope) in the local file.
+- `stages`: ordered list of columns. Each stage is `{ key, name }` or `{ key, name, id }` (fixed native id, no resolution).
+- `on`: maps events to stage keys:
+  - `createIssue`: new issues land in this stage
+  - `createBranch`: creating a branch moves the active issue to this stage
+  - `createPr`: creating a PR moves the active issue to this stage
+  - `reviewApproved`: approving a PR moves the active issue to this stage
+  - `mergePr`: a successful merge moves the active issue to this stage
 
-## Context
+### Local configuration
 
-Set once per session — tools pick it up automatically:
+`.mcp-tracker.local.json` is useful for personal preferences. The project automatically adds the entry to `.gitignore`.
 
-```
-tracker_set_context
-  repo            owner/repo          auto-detected from git remote when omitted
-  board_id        string              GitHub Projects V2 number
-  active_issue    number | null       issue being worked on; clears when null
-  default_base    branch name         base branch for new PRs
-  default_reviewers  [usernames]      added to every PR
-  default_merge_method  merge|squash|rebase
-  default_assignee  username
-  default_milestone  milestone title
-```
-
-Resolution precedence for every value: explicit argument > session > config file > git derivation. `tracker_get_context` shows each value with its source.
-
-When `active_issue` is set, these tools use it without requiring an explicit number:
-`get_issue`, `update_issue`, `move_issue_status`, `toggle_checklist_item`, `add_issue_comment`, `list_comments` (issue type), `add_sub_issue` (parent), `list_sub_issues`, `set_issue_relationship`.
-
-## Tools
-
-### Context
-| Tool | Description |
-|---|---|
-| `tracker_set_context` | Set repo, board, active issue, and defaults |
-| `tracker_get_context` | Show current context with per-value source |
-
-### Branches
-| Tool | Description |
-|---|---|
-| `create_branch` | Create branch off default; linked to issue and idempotent when an issue is resolvable |
-
-### Pull Requests
-| Tool | Description |
-|---|---|
-| `create_pr` | Create PR; applies defaults, appends `Closes #N` for active/listed issues |
-| `update_pr` | Generic edit: title, body, state, draft, labels, milestone, reviewer/assignee batches |
-| `get_pr` | Get PR details |
-| `list_prs` | List PRs by state |
-| `get_pr_checks` | Get CI check results (failing logs truncated to a bounded tail) |
-| `merge_pr` | Merge PR; applies default_merge_method from context |
-| `get_pr_diff` | Get the remote diff; positions for inline review comments |
-| `submit_pr_review` | Submit approve/request_changes/comment review with optional inline comments |
-
-### Issues
-| Tool | Description |
-|---|---|
-| `list_issues` | List issues by state, labels, assignee |
-| `create_issue` | Create with full initial state: labels, assignees, milestone, status, board fields, relationships, parent |
-| `get_issue` | Get issue details |
-| `update_issue` | Update title, body, labels, assignees, milestone, state, and batch relationship ops |
-| `move_issue_status` | Move issue to a status column (stage key or name) |
-| `toggle_checklist_item` | Mark/unmark a checklist item by partial text |
-| `add_sub_issue` | Add child issue to parent |
-| `list_sub_issues` | List child issues |
-| `set_issue_relationship` | Set blocks/blocked_by/related/duplicate; response names the mechanism used |
-
-Composite creates and updates apply the primary change first and every secondary change best-effort; failures come back in a `warnings` array, never silently.
-
-### Comments
-| Tool | Description |
-|---|---|
-| `add_issue_comment` | Add comment to issue |
-| `add_pr_comment` | Add comment to PR |
-| `list_comments` | List comments on issue or PR |
-
-### Board (github-projects, gitlab)
-| Tool | Description |
-|---|---|
-| `list_board_items` | List all items on the board (full pagination) |
-| `list_board_fields` | List custom fields and options |
-| `add_issue_to_board` | Add issue to board; returns item ID (github-projects only) |
-| `set_item_fields` | Set field values (Size, Priority, Sprint, etc.) |
-
-### Metadata
-| Tool | Description |
-|---|---|
-| `list_labels` | List repository labels |
-| `list_milestones` | List milestones |
-
-## Working on an issue
-
-Set `active_issue` once — all issue tools use it automatically for the rest of the session:
-
-```
-tracker_set_context { active_issue: 42 }
-get_issue                                      # reads #42
-toggle_checklist_item { item_text: "tests" }   # marks progress on #42
-move_issue_status { status: "Done" }           # closes the loop
+```json
+{
+  "activeIssue": "42",
+  "defaults": {
+    "assignee": "me",
+    "labels": ["my-team"]
+  }
+}
 ```
 
-The issue body (Goal, Acceptance, Verification) is the goal spec. The checklist is the state. Parent/child relationships are the execution graph.
+- `activeIssue` only makes sense in the local file (it is session state, not config).
+- `defaults` fields override the versioned file, except `labels`, which is concatenated.
+
+## Session context
+
+Use `tracker_set_context` to set values that last for the whole session:
+
+- `repo`: `owner/repo` (auto-detected from git when omitted)
+- `board_id`: board number
+- `active_issue`: issue being worked on; issue tools use it when no number is passed. Pass `null` to clear.
+- `default_base`: base branch for new PRs
+- `default_reviewers`: default list of reviewers
+- `default_merge_method`: `merge` | `squash` | `rebase`
+- `default_assignee`: default assignee
+- `default_milestone`: default milestone
+
+Use `tracker_get_context` to see current values and their sources.
+
+## Complete example
+
+```json
+{
+  "codeProvider": "github",
+  "taskProvider": "github-projects",
+  "repo": "my-org/my-repo",
+  "boardId": "1",
+  "defaults": {
+    "baseBranch": "main",
+    "mergeMethod": "squash",
+    "reviewers": ["ana"],
+    "assignee": "ana",
+    "milestone": "$current",
+    "labels": ["agent"]
+  },
+  "typeLabels": {
+    "feat": "feature",
+    "fix": "bug"
+  },
+  "workflow": {
+    "stages": [
+      { "key": "backlog", "name": "Backlog" },
+      { "key": "doing", "name": "Doing" },
+      { "key": "review", "name": "In Review" },
+      { "key": "done", "name": "Done" }
+    ],
+    "on": {
+      "createIssue": "backlog",
+      "createBranch": "doing",
+      "createPr": "review",
+      "mergePr": "done"
+    }
+  }
+}
+```
 
 ## Development
 
-```
-npm run build     # tsc
-npm test          # vitest + typecheck
-```
-
-## Source layout
-
-Organized by domain: each domain holds its interface, implementations, and tools.
-
-```
-src/
-  core/          process (async execFile, the only child_process site), errors,
-                 types, scope, bundle, checklist
-  context/       store, config (nested schema), git derivation, context tools
-  transport/     gh.ts — validated REST/GraphQL runner (injectable GhRunner)
-                 glab.ts — validated REST/GraphQL runner for GitLab CLI
-  domains/
-    code/        CodeProvider + github and gitlab impls + branch/PR/review tools
-    issues/      IssueProvider + github-projects, gitlab, and local impls + tools
-    boards/      BoardProvider + github-projects and gitlab impls + tools
-    comments/    comment tools
-    local/       markdown file storage engine
-  server.ts      provider resolution + tool registration
-  index.ts       stdio entry
-test/
-  contract/      shared IssueProvider contract suite
-  helpers/       scripted GhRunner fake
+```bash
+npm install
+npm run build   # compile to dist/
+npm test        # vitest + typecheck
 ```
 
-Design docs live in `docs/` (vision, SRS, architecture, ADRs).
+## Documentation
+
+- `docs/architecture.md`: architecture decisions, business rules, and internal flows
+- `docs/srs.md`: detailed functional and non-functional requirements
