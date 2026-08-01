@@ -460,6 +460,33 @@ async function setMilestone(
   title: string,
 ): Promise<void> {
   const ref = projectRef(repo);
+
+  let milestoneId: number;
+  if (/^\d+$/.test(title)) {
+    try {
+      const milestone = await glab.api(
+        `projects/${ref}/milestones/${Number(title)}`,
+        z.object({ id: z.number() }),
+      );
+      milestoneId = milestone.id;
+    } catch {
+      milestoneId = await findMilestoneIdByTitle(glab, ref, title);
+    }
+  } else {
+    milestoneId = await findMilestoneIdByTitle(glab, ref, title);
+  }
+
+  await glab.api(`projects/${ref}/merge_requests/${number}`, z.any(), {
+    method: 'PUT',
+    fields: { milestone_id: milestoneId },
+  });
+}
+
+async function findMilestoneIdByTitle(
+  glab: GlabRunner,
+  ref: string,
+  title: string,
+): Promise<number> {
   const params = new URLSearchParams({
     include_ancestors: 'true',
     search: title,
@@ -472,10 +499,7 @@ async function setMilestone(
   if (!match) {
     throw new Error(`milestone '${title}' not found`);
   }
-  await glab.api(`projects/${ref}/merge_requests/${number}`, z.any(), {
-    method: 'PUT',
-    fields: { milestone_id: match.id },
-  });
+  return match.id;
 }
 
 async function getPRChecks(

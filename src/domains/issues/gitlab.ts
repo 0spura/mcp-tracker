@@ -125,6 +125,11 @@ async function resolveUserIds(
   return ids;
 }
 
+const milestoneIdSchema = z.object({
+  id: z.number(),
+  title: z.string(),
+});
+
 async function resolveMilestoneId(
   glab: GlabRunner,
   repo: NonNullable<Scope['repo']>,
@@ -148,10 +153,23 @@ async function resolveMilestoneId(
     }
     return current.id;
   }
+
+  if (/^\d+$/.test(title)) {
+    try {
+      const milestone = await glab.api(
+        `projects/${ref}/milestones/${Number(title)}`,
+        milestoneIdSchema
+      );
+      return milestone.id;
+    } catch {
+      // fall through to title search
+    }
+  }
+
   const params = new URLSearchParams({ include_ancestors: 'true', search: title });
   const milestones = await glab.api(
     `projects/${ref}/milestones?${params.toString()}`,
-    z.array(z.object({ id: z.number(), title: z.string() }))
+    z.array(milestoneIdSchema)
   );
   const match = milestones.find((m) => m.title === title);
   if (!match) {

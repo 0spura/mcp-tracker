@@ -139,6 +139,17 @@ Defines status columns and the automations that move issues between them:
   - `reviewApproved`: approving a PR moves the active issue to this stage
   - `mergePr`: a successful merge moves the active issue to this stage
 
+### Id or name
+
+Most identifiers accept a human-readable name and fall back to the native id when needed:
+
+- `boardId` (GitHub Projects): opaque project node id or `owner/repo/project-number`.
+- `workflow.stages`: each stage is `{ key, name }` or `{ key, name, id }`.
+- Labels (GitHub): name or numeric label id.
+- Milestones: title, `"$current"`, or the native number/id.
+
+Names are preferred in versioned configs because they stay readable across renames. Use ids when names are ambiguous.
+
 ### Local configuration
 
 `.mcp-tracker.local.json` is useful for personal preferences. The project automatically adds the entry to `.gitignore`.

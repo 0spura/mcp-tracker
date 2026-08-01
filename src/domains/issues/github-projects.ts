@@ -98,6 +98,7 @@ function mapComment(raw: z.infer<typeof commentSchema>): Comment {
 }
 
 const repoLabelSchema = z.object({
+  id: z.number(),
   name: z.string(),
   color: z.string(),
   description: z.string().nullable().optional(),
@@ -108,6 +109,43 @@ function mapRepoLabel(raw: z.infer<typeof repoLabelSchema>): Label {
     name: raw.name,
     color: raw.color,
     description: raw.description ?? '',
+  };
+}
+
+export function createLabelResolver(gh: GhRunner) {
+  const labelCache = new Map<string, Promise<Map<string, string>>>();
+
+  async function loadLabelMap(
+    repo: NonNullable<Scope['repo']>
+  ): Promise<Map<string, string>> {
+    const key = repoPath(repo);
+    const cached = labelCache.get(key);
+    if (cached) return cached;
+
+    const promise = gh.api(
+      `/repos/${key}/labels?per_page=100`,
+      z.array(repoLabelSchema)
+    ).then((labels) => {
+      const map = new Map<string, string>();
+      for (const label of labels) {
+        map.set(String(label.id), label.name);
+      }
+      return map;
+    });
+
+    labelCache.set(key, promise);
+    return promise;
+  }
+
+  return async function resolveLabelNames(
+    repo: NonNullable<Scope['repo']>,
+    labels: string[]
+  ): Promise<string[]> {
+    if (labels.length === 0) return labels;
+    const hasNumericLabel = labels.some((label) => /^\d+$/.test(label));
+    if (!hasNumericLabel) return labels;
+    const idToName = await loadLabelMap(repo);
+    return labels.map((label) => idToName.get(label) ?? label);
   };
 }
 
@@ -127,11 +165,15 @@ function mapRepoMilestone(raw: z.infer<typeof repoMilestoneSchema>): Milestone {
   };
 }
 
-async function resolveMilestoneNumber(
+export async function resolveMilestoneNumber(
   gh: GhRunner,
   repo: NonNullable<Scope['repo']>,
   title: string
 ): Promise<number> {
+  if (/^\d+$/.test(title)) {
+    return Number(title);
+  }
+
   if (title === CURRENT_MILESTONE) {
     const milestones = await gh.api(
       `/repos/${repoPath(repo)}/milestones?state=open`,
@@ -208,7 +250,8 @@ async function findProjectItemId(
 }
 
 export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
-  const { getIssueNodeId, primeIssueNodeId, getBoardFields } = createCaches();
+  const { getIssueNodeId, primeIssueNodeId, getBoardFields, resolveBoardId } = createCaches();
+  const resolveLabelNames = createLabelResolver(gh);
 
   async function createIssue(
     scope: Scope,
@@ -222,7 +265,9 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
     const input: Record<string, unknown> = {
       title,
       body,
-      labels: opts?.labels ?? [],
+      labels: opts?.labels
+        ? await resolveLabelNames(repo, opts.labels)
+        : [],
       assignees: opts?.assignees ?? [],
     };
 
@@ -241,10 +286,12 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
     }
 
     let boardItemId: string | undefined;
+    let resolvedBoardId: string | undefined;
     if (scope.boardId) {
       try {
+        resolvedBoardId = await resolveBoardId(gh, scope.boardId);
         const contentId = raw.node_id ?? (await getIssueNodeId(gh, repo, issue.id));
-        boardItemId = await addIssueToBoard(gh, scope.boardId, contentId);
+        boardItemId = await addIssueToBoard(gh, resolvedBoardId, contentId);
       } catch (err) {
         warnings.push(
           `add to board failed: ${err instanceof Error ? err.message : String(err)}`
@@ -252,13 +299,13 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
       }
     }
 
-    if (boardItemId && scope.boardId) {
+    if (boardItemId && resolvedBoardId) {
       if (opts?.fields && Object.keys(opts.fields).length > 0) {
         try {
-          const fields = await getBoardFields(gh, scope.boardId);
+          const fields = await getBoardFields(gh, resolvedBoardId);
           for (const [name, value] of Object.entries(opts.fields)) {
             try {
-              await setProjectFieldByName(gh, scope.boardId, boardItemId, fields, name, value);
+              await setProjectFieldByName(gh, resolvedBoardId, boardItemId, fields, name, value);
             } catch (err) {
               warnings.push(
                 `set field "${name}" failed: ${err instanceof Error ? err.message : String(err)}`
@@ -274,8 +321,8 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
 
       if (opts?.status) {
         try {
-          const fields = await getBoardFields(gh, scope.boardId);
-          await setItemStatus(gh, scope.boardId, boardItemId, opts.status, fields);
+          const fields = await getBoardFields(gh, resolvedBoardId);
+          await setItemStatus(gh, resolvedBoardId, boardItemId, opts.status, fields);
         } catch (err) {
           warnings.push(
             `set status failed: ${err instanceof Error ? err.message : String(err)}`
@@ -376,7 +423,9 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
     const input: Record<string, unknown> = {};
     if (opts.title !== undefined) input.title = opts.title;
     if (opts.body !== undefined) input.body = opts.body;
-    if (opts.labels !== undefined) input.labels = opts.labels;
+    if (opts.labels !== undefined) {
+      input.labels = await resolveLabelNames(repo, opts.labels);
+    }
     if (opts.assignees !== undefined) input.assignees = opts.assignees;
     if (opts.milestone !== undefined) {
       input.milestone =
@@ -496,12 +545,13 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
       throw new Error('board context is required to set issue status');
     }
 
+    const boardId = await resolveBoardId(gh, scope.boardId);
     const [fields, itemId] = await Promise.all([
-      getBoardFields(gh, scope.boardId),
-      findProjectItemId(gh, repo, scope.boardId, id),
+      getBoardFields(gh, boardId),
+      findProjectItemId(gh, repo, boardId, id),
     ]);
 
-    await setItemStatus(gh, scope.boardId, itemId, status, fields);
+    await setItemStatus(gh, boardId, itemId, status, fields);
   }
 
   async function addIssueComment(scope: Scope, id: ItemId, body: string): Promise<void> {

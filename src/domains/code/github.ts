@@ -13,6 +13,10 @@ import type {
 } from '../../core/types.js';
 import type { CodeProvider, ListPRsOptions } from './capabilities.js';
 import { UnsupportedError } from '../../core/errors.js';
+import {
+  createLabelResolver,
+  resolveMilestoneNumber,
+} from '../issues/github-projects.js';
 
 const MAX_DIFF_CHARS = 50_000;
 const LOG_TAIL_LINES = 200;
@@ -131,12 +135,14 @@ function injectClosingLines(body: string, issues?: ItemId[]): string {
 }
 
 export function createGitHubCodeProvider(gh: GhRunner): CodeProvider {
+  const resolveLabelNames = createLabelResolver(gh);
   return {
     createBranch: (repo, issueId, branchName, base) =>
       createBranch(gh, repo, issueId, branchName, base),
     createPR: (repo, title, body, head, base, opts) =>
       createPR(gh, repo, title, body, head, base, opts),
-    updatePR: (repo, number, opts) => updatePR(gh, repo, number, opts),
+    updatePR: (repo, number, opts) =>
+      updatePR(gh, repo, number, opts, resolveLabelNames),
     getPR: (repo, number) => getPR(gh, repo, number),
     listPRs: (repo, opts) => listPRs(gh, repo, opts),
     getPRChecks: (repo, number) => getPRChecks(gh, repo, number),
@@ -391,7 +397,11 @@ async function updatePR(
   gh: GhRunner,
   repo: TrackerRepo,
   number: number,
-  opts: UpdatePROptions
+  opts: UpdatePROptions,
+  resolveLabelNames: (
+    repo: TrackerRepo,
+    labels: string[]
+  ) => Promise<string[]>
 ): Promise<{ pr: PR; warnings: string[] }> {
   const warnings: string[] = [];
 
@@ -431,10 +441,11 @@ async function updatePR(
 
   if (opts.labels !== undefined) {
     try {
+      const resolvedLabels = await resolveLabelNames(repo, opts.labels);
       await gh.api(
         `/repos/${repoPath(repo)}/issues/${number}/labels`,
         z.any(),
-        { method: 'PUT', input: { labels: opts.labels } }
+        { method: 'PUT', input: { labels: resolvedLabels } }
       );
     } catch (err) {
       warnings.push(
@@ -552,18 +563,11 @@ async function setMilestone(
   number: number,
   title: string
 ): Promise<void> {
-  const milestones = await gh.api(
-    `/repos/${repoPath(repo)}/milestones?state=all`,
-    z.array(z.object({ number: z.number(), title: z.string() }))
-  );
-  const match = milestones.find((m) => m.title === title);
-  if (!match) {
-    throw new Error(`milestone "${title}" not found`);
-  }
+  const milestoneNumber = await resolveMilestoneNumber(gh, repo, title);
   await gh.api(
     `/repos/${repoPath(repo)}/issues/${number}`,
     z.any(),
-    { method: 'PATCH', input: { milestone: match.number } }
+    { method: 'PATCH', input: { milestone: milestoneNumber } }
   );
 }
 

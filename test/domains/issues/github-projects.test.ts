@@ -170,6 +170,34 @@ describe('createGitHubProjectsIssueProvider', () => {
       });
     });
 
+    it('resolves numeric label ids to names', async () => {
+      const { provider, fake } = makeProvider([
+        {
+          stdout: JSON.stringify([
+            { id: 123, name: 'bug', color: 'ff0000', description: '' },
+          ]),
+        },
+        { stdout: JSON.stringify(issueFixture()) },
+      ]);
+
+      const { issue, warnings } = await provider.createIssue(
+        { repo },
+        'A bug',
+        'details',
+        { labels: ['123'] }
+      );
+
+      expect(issue.id).toBe('42');
+      expect(warnings).toEqual([]);
+      expect(fake.calls[0].args.join(' ')).toContain('/repos/acme/widget/labels');
+      expect(restInput(fake.calls[1])).toEqual({
+        title: 'A bug',
+        body: 'details',
+        labels: ['bug'],
+        assignees: [],
+      });
+    });
+
     it('composites board add, status, parent and relationships in order', async () => {
       const { provider, fake } = makeProvider([
         { stdout: JSON.stringify(issueFixture()) },
@@ -304,6 +332,43 @@ describe('createGitHubProjectsIssueProvider', () => {
       expect(fake.calls[0].args.join(' ')).toContain('milestones');
       expect(fake.calls[1].args).toContain('/repos/acme/widget/issues/42');
       expect(restInput(fake.calls[1])).toEqual({ milestone: 6 });
+    });
+
+    it('resolves milestone by number string', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(issueFixture()) },
+      ]);
+
+      const { issue } = await provider.updateIssue(
+        { repo },
+        '42',
+        { milestone: '6' }
+      );
+
+      expect(issue.id).toBe('42');
+      expect(fake.calls[0].args).toContain('/repos/acme/widget/issues/42');
+      expect(restInput(fake.calls[0])).toEqual({ milestone: 6 });
+    });
+
+    it('resolves numeric label ids to names on update', async () => {
+      const { provider, fake } = makeProvider([
+        {
+          stdout: JSON.stringify([
+            { id: 123, name: 'bug', color: 'ff0000', description: '' },
+          ]),
+        },
+        { stdout: JSON.stringify(issueFixture()) },
+      ]);
+
+      const { issue } = await provider.updateIssue(
+        { repo },
+        '42',
+        { labels: ['123'] }
+      );
+
+      expect(issue.id).toBe('42');
+      expect(fake.calls[0].args.join(' ')).toContain('/repos/acme/widget/labels');
+      expect(restInput(fake.calls[1])).toEqual({ labels: ['bug'] });
     });
 
     it('clears milestone with null', async () => {
@@ -584,7 +649,7 @@ describe('createGitHubProjectsIssueProvider', () => {
       const { provider, fake } = makeProvider([
         {
           stdout: JSON.stringify([
-            { name: 'bug', color: 'ff0000', description: 'Bug' },
+            { id: 1, name: 'bug', color: 'ff0000', description: 'Bug' },
           ]),
         },
       ]);

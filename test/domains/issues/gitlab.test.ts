@@ -284,6 +284,24 @@ describe('createGitLabIssueProvider', () => {
       expect(restFields(fake.calls[1])).toEqual({ milestone_id: 6 });
     });
 
+    it('resolves milestone by id string', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify({ id: 6, title: 'Sprint 2' }) },
+        { stdout: JSON.stringify(issueFixture()) },
+      ]);
+
+      const { issue, warnings } = await provider.updateIssue(
+        { repo },
+        '42',
+        { milestone: '6' }
+      );
+
+      expect(issue.id).toBe('42');
+      expect(warnings).toEqual([]);
+      expect(fake.calls[0].args.join(' ')).toContain('milestones/6');
+      expect(restFields(fake.calls[1])).toEqual({ milestone_id: 6 });
+    });
+
     it('clears milestone with null', async () => {
       const { provider, fake } = makeProvider([
         { stdout: JSON.stringify(issueFixture()) },

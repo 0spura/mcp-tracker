@@ -374,6 +374,44 @@ describe('createGitHubCodeProvider', () => {
       expect(input.milestone).toBe(6);
     });
 
+    it('resolves milestone by number string', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(prFixture()) },
+        { stdout: JSON.stringify({}) },
+      ]);
+
+      const { warnings } = await provider.updatePR(repo, 3, {
+        milestone: '6',
+      });
+
+      expect(warnings).toEqual([]);
+      expect(fake.calls[1].args).toContain('/repos/acme/widget/issues/3');
+      const input = JSON.parse(fake.calls[1].input ?? '{}');
+      expect(input.milestone).toBe(6);
+    });
+
+    it('resolves numeric label ids to names', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(prFixture()) },
+        {
+          stdout: JSON.stringify([
+            { id: 123, name: 'bug', color: 'ff0000', description: '' },
+          ]),
+        },
+        { stdout: JSON.stringify({}) },
+      ]);
+
+      const { warnings } = await provider.updatePR(repo, 3, {
+        labels: ['123'],
+      });
+
+      expect(warnings).toEqual([]);
+      expect(fake.calls[1].args.join(' ')).toContain('/repos/acme/widget/labels');
+      expect(fake.calls[2].args).toContain('/repos/acme/widget/issues/3/labels');
+      const input = JSON.parse(fake.calls[2].input ?? '{}');
+      expect(input.labels).toEqual(['bug']);
+    });
+
     it('batches reviewer and assignee changes', async () => {
       const { provider, fake } = makeProvider([
         { stdout: JSON.stringify(prFixture()) },

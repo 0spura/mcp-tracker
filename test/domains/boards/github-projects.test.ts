@@ -377,4 +377,55 @@ describe('createGitHubProjectsBoardProvider', () => {
       ).rejects.toThrow('board context is required');
     });
   });
+
+  describe('boardId resolution', () => {
+    it('resolves owner/repo/number to the project node id', async () => {
+      const { provider, fake } = makeProvider([
+        graphqlOk({
+          repository: { projectV2: { id: 'PVT_resolved' } },
+        }),
+        itemPage([], false, null),
+      ]);
+
+      await provider.listBoardItems({ repo, boardId: 'acme/widget/5' });
+
+      const vars = graphqlVariables(fake.calls[1]);
+      expect(vars.projectId).toBe('PVT_resolved');
+    });
+
+    it('caches the resolved board id', async () => {
+      const { provider, fake } = makeProvider([
+        graphqlOk({
+          repository: { projectV2: { id: 'PVT_resolved' } },
+        }),
+        itemPage([], false, null),
+        itemPage([], false, null),
+      ]);
+
+      await provider.listBoardItems({ repo, boardId: 'acme/widget/5' });
+      await provider.listBoardItems({ repo, boardId: 'acme/widget/5' });
+
+      expect(fake.calls).toHaveLength(3);
+      expect(graphqlQuery(fake.calls[0])).toContain('projectV2');
+    });
+
+    it('passes opaque node ids through unchanged', async () => {
+      const { provider, fake } = makeProvider([itemPage([], false, null)]);
+
+      await provider.listBoardItems({ repo, boardId: 'PVT_opaque' });
+
+      const vars = graphqlVariables(fake.calls[0]);
+      expect(vars.projectId).toBe('PVT_opaque');
+    });
+
+    it('errors when the project is not found', async () => {
+      const { provider } = makeProvider([
+        graphqlOk({ repository: { projectV2: null } }),
+      ]);
+
+      await expect(
+        provider.listBoardItems({ repo, boardId: 'acme/widget/99' })
+      ).rejects.toThrow('project "acme/widget/99" not found');
+    });
+  });
 });
