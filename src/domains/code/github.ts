@@ -12,8 +12,10 @@ import type {
   ItemId,
 } from '../../core/types.js';
 import type { CodeProvider, ListPRsOptions } from './capabilities.js';
+import { resolveUsernames } from '../../core/user.js';
 import { UnsupportedError } from '../../core/errors.js';
 import {
+  createCurrentUserResolver,
   createLabelResolver,
   resolveMilestoneNumber,
 } from '../issues/github-projects.js';
@@ -136,17 +138,18 @@ function injectClosingLines(body: string, issues?: ItemId[]): string {
 
 export function createGitHubCodeProvider(gh: GhRunner): CodeProvider {
   const resolveLabelNames = createLabelResolver(gh);
+  const getCurrentLogin = createCurrentUserResolver(gh);
   return {
     createBranch: (repo, issueId, branchName, base) =>
       createBranch(gh, repo, issueId, branchName, base),
     createPR: (repo, title, body, head, base, opts) =>
       createPR(gh, repo, title, body, head, base, opts),
     updatePR: (repo, number, opts) =>
-      updatePR(gh, repo, number, opts, resolveLabelNames),
+      updatePR(gh, repo, number, opts, resolveLabelNames, getCurrentLogin),
     getPR: (repo, number) => getPR(gh, repo, number),
     listPRs: (repo, opts) => listPRs(gh, repo, opts),
     getPRChecks: (repo, number) => getPRChecks(gh, repo, number),
-    mergePR: (repo, number, method) => mergePR(gh, repo, number, method),
+    mergePR: (repo, number, method, opts) => mergePR(gh, repo, number, method, opts),
     getPRDiff: (repo, number) => getPRDiff(gh, repo, number),
     submitPRReview: (repo, number, review) =>
       submitPRReview(gh, repo, number, review),
@@ -401,7 +404,8 @@ async function updatePR(
   resolveLabelNames: (
     repo: TrackerRepo,
     labels: string[]
-  ) => Promise<string[]>
+  ) => Promise<string[]>,
+  getCurrentLogin: () => Promise<string>
 ): Promise<{ pr: PR; warnings: string[] }> {
   const warnings: string[] = [];
 
@@ -466,10 +470,11 @@ async function updatePR(
 
   if (opts.add_reviewers && opts.add_reviewers.length > 0) {
     try {
+      const reviewers = await resolveUsernames(opts.add_reviewers, getCurrentLogin);
       await gh.api(
         `/repos/${repoPath(repo)}/pulls/${number}/requested_reviewers`,
         z.any(),
-        { method: 'POST', input: { reviewers: opts.add_reviewers } }
+        { method: 'POST', input: { reviewers } }
       );
     } catch (err) {
       warnings.push(
@@ -480,10 +485,11 @@ async function updatePR(
 
   if (opts.remove_reviewers && opts.remove_reviewers.length > 0) {
     try {
+      const reviewers = await resolveUsernames(opts.remove_reviewers, getCurrentLogin);
       await gh.api(
         `/repos/${repoPath(repo)}/pulls/${number}/requested_reviewers`,
         z.any(),
-        { method: 'DELETE', input: { reviewers: opts.remove_reviewers } }
+        { method: 'DELETE', input: { reviewers } }
       );
     } catch (err) {
       warnings.push(
@@ -494,10 +500,11 @@ async function updatePR(
 
   if (opts.add_assignees && opts.add_assignees.length > 0) {
     try {
+      const assignees = await resolveUsernames(opts.add_assignees, getCurrentLogin);
       await gh.api(
         `/repos/${repoPath(repo)}/issues/${number}/assignees`,
         z.any(),
-        { method: 'POST', input: { assignees: opts.add_assignees } }
+        { method: 'POST', input: { assignees } }
       );
     } catch (err) {
       warnings.push(
@@ -508,10 +515,11 @@ async function updatePR(
 
   if (opts.remove_assignees && opts.remove_assignees.length > 0) {
     try {
+      const assignees = await resolveUsernames(opts.remove_assignees, getCurrentLogin);
       await gh.api(
         `/repos/${repoPath(repo)}/issues/${number}/assignees`,
         z.any(),
-        { method: 'DELETE', input: { assignees: opts.remove_assignees } }
+        { method: 'DELETE', input: { assignees } }
       );
     } catch (err) {
       warnings.push(
@@ -615,13 +623,32 @@ async function mergePR(
   gh: GhRunner,
   repo: TrackerRepo,
   number: number,
-  method?: 'merge' | 'squash' | 'rebase'
-): Promise<void> {
+  method?: 'merge' | 'squash' | 'rebase',
+  opts?: { deleteBranch?: boolean }
+): Promise<{ warnings: string[] }> {
+  const headBranch = opts?.deleteBranch ? (await getPR(gh, repo, number)).headBranch : undefined;
+
   await gh.api(
     `/repos/${repoPath(repo)}/pulls/${number}/merge`,
     z.any(),
     { method: 'PUT', input: { merge_method: method ?? 'squash' } }
   );
+
+  const warnings: string[] = [];
+  if (opts?.deleteBranch && headBranch) {
+    try {
+      await gh.api(
+        `/repos/${repoPath(repo)}/git/refs/heads/${encodeURIComponent(headBranch)}`,
+        z.any(),
+        { method: 'DELETE' }
+      );
+    } catch (err) {
+      warnings.push(
+        `delete branch failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+  return { warnings };
 }
 
 async function getPRDiff(

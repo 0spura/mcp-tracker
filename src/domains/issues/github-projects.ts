@@ -14,6 +14,7 @@ import type {
 } from '../../core/types.js';
 import { toggleChecklistItem as toggleChecklistItemInBody } from '../../core/checklist.js';
 import { CURRENT_MILESTONE, pickCurrentMilestone } from '../../core/milestone.js';
+import { resolveUsernames } from '../../core/user.js';
 import { UnsupportedError } from '../../core/errors.js';
 import {
   createCaches,
@@ -149,6 +150,18 @@ export function createLabelResolver(gh: GhRunner) {
   };
 }
 
+export function createCurrentUserResolver(gh: GhRunner): () => Promise<string> {
+  let currentLoginPromise: Promise<string> | undefined;
+  return function getCurrentLogin(): Promise<string> {
+    if (!currentLoginPromise) {
+      currentLoginPromise = gh
+        .api('/user', z.object({ login: z.string() }))
+        .then((u) => u.login);
+    }
+    return currentLoginPromise;
+  };
+}
+
 const repoMilestoneSchema = z.object({
   number: z.number(),
   title: z.string(),
@@ -252,6 +265,7 @@ async function findProjectItemId(
 export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
   const { getIssueNodeId, primeIssueNodeId, getBoardFields, resolveBoardId } = createCaches();
   const resolveLabelNames = createLabelResolver(gh);
+  const getCurrentLogin = createCurrentUserResolver(gh);
 
   async function createIssue(
     scope: Scope,
@@ -268,7 +282,9 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
       labels: opts?.labels
         ? await resolveLabelNames(repo, opts.labels)
         : [],
-      assignees: opts?.assignees ?? [],
+      assignees: opts?.assignees
+        ? await resolveUsernames(opts.assignees, getCurrentLogin)
+        : [],
     };
 
     if (opts?.milestone) {
@@ -426,7 +442,9 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
     if (opts.labels !== undefined) {
       input.labels = await resolveLabelNames(repo, opts.labels);
     }
-    if (opts.assignees !== undefined) input.assignees = opts.assignees;
+    if (opts.assignees !== undefined) {
+      input.assignees = await resolveUsernames(opts.assignees, getCurrentLogin);
+    }
     if (opts.milestone !== undefined) {
       input.milestone =
         opts.milestone === null

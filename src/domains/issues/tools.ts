@@ -2,11 +2,15 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ContextStore } from '../../context/store.js';
 import type { IssueProvider } from './capabilities.js';
+import type { Issue, PR } from '../../core/types.js';
+import { UnsupportedError } from '../../core/errors.js';
 import {
   json,
   text,
   REPO_PARAM,
   ISSUE_NUMBER_PARAM,
+  ATTACHMENTS_PARAM,
+  appendAttachments,
   resolveIssueId,
   resolveScope,
 } from '../../tools/helpers.js';
@@ -56,7 +60,7 @@ export function registerIssueTools(
 
   server.tool(
     'create_issue',
-    'Create an issue with its full initial state in one call: labels, assignees, milestone, board status, board fields, relationships (blocks/blocked_by/related/duplicate_of), and parent. When board context is set, the issue is added to the board automatically. Secondary-step failures are reported in warnings, never thrown.',
+    'Create an issue with its full initial state in one call: labels, assignees, milestone, board status, board fields, relationships (blocks/blocked_by/related/duplicate_of), parent, and attachments. When board context is set, the issue is added to the board automatically. Secondary-step failures are reported in warnings, never thrown.',
     {
       title: z.string(),
       body: z.string(),
@@ -71,11 +75,18 @@ export function registerIssueTools(
       related: z.array(z.number().int().positive()).optional(),
       duplicate_of: z.number().int().positive().optional(),
       parent: z.number().int().positive().optional().describe('Parent issue; creates as sub-issue.'),
+      attachments: ATTACHMENTS_PARAM,
       repo: REPO_PARAM,
     },
     async ({ repo: repoArg, ...args }) => {
       const scope = await scopeOf(repoArg);
       const config = await ctx.getConfig();
+      const { body, warnings: attachmentWarnings } = await appendAttachments(
+        issue,
+        scope,
+        args.body,
+        args.attachments
+      );
       const defaultAssignee = (await ctx.resolveDefaultAssignee()).value;
       const defaultMilestone = (await ctx.resolveDefaultMilestone()).value;
       let typeLabel: string | undefined;
@@ -101,7 +112,7 @@ export function registerIssueTools(
         );
         status = stage ? (stage.id ?? stage.name) : undefined;
       }
-      const result = await issue.createIssue(scope, args.title, args.body, {
+      const result = await issue.createIssue(scope, args.title, body, {
         labels: labels.length > 0 ? labels : undefined,
         assignees:
           args.assignees ??
@@ -115,7 +126,10 @@ export function registerIssueTools(
         duplicate_of: args.duplicate_of !== undefined ? String(args.duplicate_of) : undefined,
         parent: args.parent !== undefined ? String(args.parent) : undefined,
       });
-      return json(result);
+      return json({
+        ...result,
+        warnings: [...result.warnings, ...attachmentWarnings],
+      });
     }
   );
 
@@ -129,7 +143,7 @@ export function registerIssueTools(
 
   server.tool(
     'update_issue',
-    'Update title, body, labels, assignees, milestone, state, and batch relationship operations in one call. Defaults to the active issue.',
+    'Update title, body, labels, assignees, milestone, state, batch relationship operations, and attachments in one call. Defaults to the active issue. Attachments are appended to the body when a new body is given, otherwise posted as a comment.',
     {
       number: ISSUE_NUMBER_PARAM,
       title: z.string().optional(),
@@ -145,34 +159,58 @@ export function registerIssueTools(
       add_related: z.array(z.number().int().positive()).optional(),
       remove_related: z.array(z.number().int().positive()).optional(),
       duplicate_of: z.number().int().positive().nullable().optional(),
+      attachments: ATTACHMENTS_PARAM,
       repo: REPO_PARAM,
     },
     async ({ repo: repoArg, number, ...opts }) => {
       const scope = await scopeOf(repoArg);
       const id = await resolveIssueId(ctx, number);
       const toIds = (list?: number[]) => list?.map(String);
-      return json(
-        await issue.updateIssue(scope, id, {
-          title: opts.title,
-          body: opts.body,
-          labels: opts.labels,
-          assignees: opts.assignees,
-          milestone: opts.milestone,
-          state: opts.state,
-          add_blocks: toIds(opts.add_blocks),
-          remove_blocks: toIds(opts.remove_blocks),
-          add_blocked_by: toIds(opts.add_blocked_by),
-          remove_blocked_by: toIds(opts.remove_blocked_by),
-          add_related: toIds(opts.add_related),
-          remove_related: toIds(opts.remove_related),
-          duplicate_of:
-            opts.duplicate_of === undefined
-              ? undefined
-              : opts.duplicate_of === null
-                ? null
-                : String(opts.duplicate_of),
-        })
-      );
+
+      let body = opts.body;
+      let attachmentWarnings: string[] = [];
+      let attachmentComment: string | undefined;
+      if (opts.attachments && opts.attachments.length > 0) {
+        if (opts.body !== undefined) {
+          const result = await appendAttachments(issue, scope, opts.body, opts.attachments);
+          body = result.body;
+          attachmentWarnings = result.warnings;
+        } else {
+          const result = await appendAttachments(issue, scope, '', opts.attachments);
+          attachmentComment = result.body || undefined;
+          attachmentWarnings = result.warnings;
+        }
+      }
+
+      const result = await issue.updateIssue(scope, id, {
+        title: opts.title,
+        body,
+        labels: opts.labels,
+        assignees: opts.assignees,
+        milestone: opts.milestone,
+        state: opts.state,
+        add_blocks: toIds(opts.add_blocks),
+        remove_blocks: toIds(opts.remove_blocks),
+        add_blocked_by: toIds(opts.add_blocked_by),
+        remove_blocked_by: toIds(opts.remove_blocked_by),
+        add_related: toIds(opts.add_related),
+        remove_related: toIds(opts.remove_related),
+        duplicate_of:
+          opts.duplicate_of === undefined
+            ? undefined
+            : opts.duplicate_of === null
+              ? null
+              : String(opts.duplicate_of),
+      });
+
+      if (attachmentComment) {
+        await issue.addIssueComment(scope, id, attachmentComment);
+      }
+
+      return json({
+        ...result,
+        warnings: [...result.warnings, ...attachmentWarnings],
+      });
     }
   );
 
@@ -277,6 +315,86 @@ export function registerIssueTools(
       'List milestones.',
       { state: z.enum(['open', 'closed', 'all']).optional(), repo: REPO_PARAM },
       async (args) => json(await listMilestones(await scopeOf(args.repo), args.state))
+    );
+  }
+
+  if (issue.logTime) {
+    const logTime = issue.logTime.bind(issue);
+    server.tool(
+      'log_time',
+      'Log spent and/or estimated time on an issue, using GitLab duration syntax (e.g. "1h30m", "30m", "2h"). Defaults to the active issue.',
+      {
+        spend: z.string().optional().describe('Time spent, e.g. "1h30m".'),
+        estimate: z.string().optional().describe('Time estimate, e.g. "2h".'),
+        number: ISSUE_NUMBER_PARAM,
+        repo: REPO_PARAM,
+      },
+      async (args) =>
+        json(
+          await logTime(await scopeOf(args.repo), await resolveIssueId(ctx, args.number), {
+            spend: args.spend,
+            estimate: args.estimate,
+          })
+        )
+    );
+  }
+
+  if (issue.attachFile) {
+    const attachFile = issue.attachFile.bind(issue);
+    server.tool(
+      'upload_attachment',
+      'Upload a local file to the issue tracker and return its markdown link. Optionally post that link as a comment on the issue right away. Defaults to the active issue.',
+      {
+        file_path: z.string().describe('Path to the local file to upload.'),
+        post_as_comment: z
+          .boolean()
+          .optional()
+          .describe('Post the markdown link as a comment on the issue.'),
+        number: ISSUE_NUMBER_PARAM,
+        repo: REPO_PARAM,
+      },
+      async (args) => {
+        const scope = await scopeOf(args.repo);
+        const id = await resolveIssueId(ctx, args.number);
+        const result = await attachFile(scope, args.file_path);
+        if (args.post_as_comment) {
+          await issue.addIssueComment(scope, id, result.markdown);
+        }
+        return json(result);
+      }
+    );
+  }
+
+  if (issue.listRelatedIssues || issue.listLinkedPRs) {
+    const listRelated = issue.listRelatedIssues?.bind(issue);
+    const listLinked = issue.listLinkedPRs?.bind(issue);
+    server.tool(
+      'list_linked_items',
+      'List issues and/or merge/pull requests linked to this issue. Defaults to the active issue.',
+      {
+        type: z
+          .enum(['issues', 'prs', 'all'])
+          .optional()
+          .describe('Which linked items to fetch; defaults to "all".'),
+        number: ISSUE_NUMBER_PARAM,
+        repo: REPO_PARAM,
+      },
+      async (args) => {
+        const scope = await scopeOf(args.repo);
+        const id = await resolveIssueId(ctx, args.number);
+        const type = args.type ?? 'all';
+        const result: { issues?: Issue[]; prs?: PR[] } = {};
+
+        if (type !== 'prs') {
+          if (!listRelated) throw new UnsupportedError('list_linked_items with type "issues"');
+          result.issues = await listRelated(scope, id);
+        }
+        if (type !== 'issues') {
+          if (!listLinked) throw new UnsupportedError('list_linked_items with type "prs"');
+          result.prs = await listLinked(scope, id);
+        }
+        return json(result);
+      }
     );
   }
 }

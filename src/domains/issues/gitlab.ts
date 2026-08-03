@@ -11,10 +11,12 @@ import type {
   Comment,
   Label,
   Milestone,
+  PR,
 } from '../../core/types.js';
 import { toggleChecklistItem as toggleInBody } from '../../core/checklist.js';
 import { CURRENT_MILESTONE, pickCurrentMilestone } from '../../core/milestone.js';
-import { UnsupportedError } from '../../core/errors.js';
+import { resolveUsernames } from '../../core/user.js';
+import { ParseError, UnsupportedError } from '../../core/errors.js';
 
 export interface GitLabIssueProviderOptions {
   /** Workflow stages used to map status moves to mutually-exclusive labels. */
@@ -125,6 +127,57 @@ async function resolveUserIds(
   return ids;
 }
 
+const uploadSchema = z.object({
+  url: z.string(),
+  markdown: z.string(),
+});
+
+const linkedIssueSchema = z.object({
+  iid: z.number(),
+  title: z.string(),
+  description: z.string().nullable().optional(),
+  state: z.enum(['opened', 'closed']),
+  web_url: z.string(),
+  labels: z.array(z.string()).optional(),
+  assignees: z.array(z.object({ username: z.string() })).optional(),
+  milestone: z.object({ title: z.string() }).nullable().optional(),
+});
+
+function mapLinkedIssue(raw: z.infer<typeof linkedIssueSchema>): Issue {
+  return {
+    id: String(raw.iid),
+    title: raw.title,
+    body: raw.description ?? '',
+    state: raw.state === 'opened' ? 'open' : 'closed',
+    url: raw.web_url,
+    labels: raw.labels ?? [],
+    assignees: raw.assignees?.map((a) => a.username) ?? [],
+    milestone: raw.milestone?.title ?? null,
+  };
+}
+
+const linkedMrSchema = z.object({
+  iid: z.number(),
+  title: z.string(),
+  description: z.string().nullable(),
+  state: z.enum(['opened', 'closed', 'merged', 'locked']),
+  web_url: z.string(),
+  source_branch: z.string(),
+  target_branch: z.string(),
+});
+
+function mapLinkedMr(raw: z.infer<typeof linkedMrSchema>): PR {
+  return {
+    number: raw.iid,
+    title: raw.title,
+    body: raw.description ?? '',
+    state: raw.state === 'opened' || raw.state === 'locked' ? 'open' : raw.state,
+    url: raw.web_url,
+    headBranch: raw.source_branch,
+    baseBranch: raw.target_branch,
+  };
+}
+
 const milestoneIdSchema = z.object({
   id: z.number(),
   title: z.string(),
@@ -184,6 +237,16 @@ export function createGitLabIssueProvider(
 ): IssueProvider {
   const stages = opts.stages ?? [];
 
+  let currentUsernamePromise: Promise<string> | undefined;
+  function getCurrentUsername(): Promise<string> {
+    if (!currentUsernamePromise) {
+      currentUsernamePromise = glab
+        .api('user', z.object({ username: z.string() }))
+        .then((u) => u.username);
+    }
+    return currentUsernamePromise;
+  }
+
   function statusLabel(status: string): string {
     const stage = stages.find(
       (s) => s.key === status || s.name === status || s.id === status
@@ -232,7 +295,8 @@ export function createGitLabIssueProvider(
       fields.labels = opts.labels.join(',');
     }
     if (opts?.assignees && opts.assignees.length > 0) {
-      fields.assignee_ids = await resolveUserIds(glab, opts.assignees);
+      const assignees = await resolveUsernames(opts.assignees, getCurrentUsername);
+      fields.assignee_ids = await resolveUserIds(glab, assignees);
     }
     if (opts?.milestone) {
       fields.milestone_id = await resolveMilestoneId(glab, repo, opts.milestone);
@@ -318,7 +382,8 @@ export function createGitLabIssueProvider(
     if (opts.body !== undefined) fields.description = opts.body;
     if (opts.labels !== undefined) fields.labels = opts.labels.join(',');
     if (opts.assignees !== undefined) {
-      fields.assignee_ids = await resolveUserIds(glab, opts.assignees);
+      const assignees = await resolveUsernames(opts.assignees, getCurrentUsername);
+      fields.assignee_ids = await resolveUserIds(glab, assignees);
     }
     if (opts.milestone !== undefined) {
       fields.milestone_id =
@@ -632,6 +697,91 @@ export function createGitLabIssueProvider(
     return raw.map(mapMilestone);
   }
 
+  async function logTime(
+    scope: Scope,
+    id: ItemId,
+    opts: { spend?: string; estimate?: string }
+  ): Promise<{ warnings: string[] }> {
+    const repo = requireRepo(scope);
+    const ref = projectRef(repo);
+    const number = toIssueNumber(id);
+    const warnings: string[] = [];
+
+    if (opts.spend) {
+      try {
+        await glab.api(
+          `projects/${ref}/issues/${number}/add_spent_time`,
+          z.any(),
+          { method: 'POST', fields: { duration: opts.spend } }
+        );
+      } catch (err) {
+        warnings.push(
+          `add spent time failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
+    if (opts.estimate) {
+      try {
+        await glab.api(
+          `projects/${ref}/issues/${number}/time_estimate`,
+          z.any(),
+          { method: 'POST', fields: { duration: opts.estimate } }
+        );
+      } catch (err) {
+        warnings.push(
+          `set time estimate failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
+    return { warnings };
+  }
+
+  async function attachFile(
+    scope: Scope,
+    filePath: string
+  ): Promise<{ url: string; markdown: string }> {
+    const repo = requireRepo(scope);
+    const ref = projectRef(repo);
+    const stdout = await glab.raw([
+      'api',
+      `projects/${ref}/uploads`,
+      '-F',
+      `file=@${filePath}`,
+    ]);
+    const source = `projects/${ref}/uploads`;
+    let json: unknown;
+    try {
+      json = JSON.parse(stdout);
+    } catch (err) {
+      throw new ParseError(source, `invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const result = uploadSchema.safeParse(json);
+    if (!result.success) {
+      throw new ParseError(source, result.error.message);
+    }
+    return { url: result.data.url, markdown: result.data.markdown };
+  }
+
+  async function listRelatedIssues(scope: Scope, id: ItemId): Promise<Issue[]> {
+    const repo = requireRepo(scope);
+    const raw = await glab.api(
+      `projects/${projectRef(repo)}/issues/${toIssueNumber(id)}/links`,
+      z.array(linkedIssueSchema)
+    );
+    return raw.map(mapLinkedIssue);
+  }
+
+  async function listLinkedPRs(scope: Scope, id: ItemId): Promise<PR[]> {
+    const repo = requireRepo(scope);
+    const raw = await glab.api(
+      `projects/${projectRef(repo)}/issues/${toIssueNumber(id)}/related_merge_requests`,
+      z.array(linkedMrSchema)
+    );
+    return raw.map(mapLinkedMr);
+  }
+
   return {
     listIssues,
     createIssue,
@@ -646,5 +796,9 @@ export function createGitLabIssueProvider(
     listSubIssues,
     listLabels,
     listMilestones,
+    logTime,
+    attachFile,
+    listRelatedIssues,
+    listLinkedPRs,
   };
 }

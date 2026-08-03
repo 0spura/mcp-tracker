@@ -82,6 +82,7 @@ Values applied automatically when a tool does not receive the argument explicitl
   "defaults": {
     "baseBranch": "main",
     "mergeMethod": "squash",
+    "deleteBranchOnMerge": true,
     "reviewers": ["ana"],
     "assignee": "ana",
     "milestone": "Sprint 12",
@@ -91,6 +92,8 @@ Values applied automatically when a tool does not receive the argument explicitl
 ```
 
 - `mergeMethod`: `merge` | `squash` | `rebase`
+- `deleteBranchOnMerge`: delete the source branch after `merge_pr`. GitLab does this in the merge call itself; GitHub does an extra ref-delete call after a successful merge, best-effort (failure surfaces as a warning, the merge itself is unaffected).
+- `assignee`: use `"$current"` to resolve to the authenticated account (GitLab: `GET user`, GitHub: `gh api /user`). Not resolved by the `local` provider — there is no authenticated account to resolve against, so `"$current"` is stored as a literal string.
 - `milestone`: use `"$current"` to dynamically resolve to the active milestone with the nearest upcoming due date
 - `labels`: labels applied on issue/PR creation
 
@@ -147,6 +150,7 @@ Most identifiers accept a human-readable name and fall back to the native id whe
 - `workflow.stages`: each stage is `{ key, name }` or `{ key, name, id }`.
 - Labels (GitHub): name or numeric label id.
 - Milestones: title, `"$current"`, or the native number/id.
+- Assignees/reviewers: username, or `"$current"` for the authenticated account.
 
 Names are preferred in versioned configs because they stay readable across renames. Use ids when names are ambiguous.
 
@@ -177,7 +181,8 @@ Use `tracker_set_context` to set values that last for the whole session:
 - `default_base`: base branch for new PRs
 - `default_reviewers`: default list of reviewers
 - `default_merge_method`: `merge` | `squash` | `rebase`
-- `default_assignee`: default assignee
+- `default_merge_delete_branch`: delete the source branch on `merge_pr`
+- `default_assignee`: default assignee. `"$current"` resolves to the authenticated account.
 - `default_milestone`: default milestone
 
 Use `tracker_get_context` to see current values and their sources.
@@ -218,6 +223,14 @@ Use `tracker_get_context` to see current values and their sources.
   }
 }
 ```
+
+## GitLab-only capabilities
+
+A few tools are only registered when the issue provider is `gitlab` — they simply don't appear for other providers, per the "unsupported is explicit" rule (see `docs/architecture.md`):
+
+- `log_time`: logs spent/estimated time on an issue via GitLab's native time-tracking endpoints. No GitHub equivalent exists.
+- `upload_attachment`: uploads a local file to the project and returns its markdown link, optionally posting it as a comment right away. GitHub has no stable public REST endpoint for arbitrary issue attachments (the web UI's upload path is undocumented), so this isn't available for GitHub. `create_issue`, `update_issue`, `add_issue_comment`, `add_pr_comment`, and `create_pr` also accept an `attachments` (file paths) argument that uploads and appends the markdown links in the same call, instead of a separate `upload_attachment` round trip.
+- `list_linked_items`: reads issues and/or merge requests linked to an issue, filtered by `type` (`issues` | `prs` | `all`) — one tool, not two, so the two link kinds don't need separate calls. GitHub would need GraphQL timeline-event parsing to do this reliably; left out of this pass rather than shipped half-working.
 
 ## Development
 

@@ -10,14 +10,14 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 
 ### RF-CTX.1: Set and read session context
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
-* `tracker_set_context` accepts `repo`, `board_id`, `active_issue`, `default_base`, `default_reviewers`, `default_merge_method`, `default_assignee`, `default_milestone`; omitted fields keep their current value.
+* `tracker_set_context` accepts `repo`, `board_id`, `active_issue`, `default_base`, `default_reviewers`, `default_merge_method`, `default_merge_delete_branch`, `default_assignee`, `default_milestone`; omitted fields keep their current value.
 * Setting `active_issue` to `null` clears it.
 * `tracker_get_context` returns every resolved value with its source (`explicit`, `session`, `config`, `derived`).
 
 ### RF-CTX.2: Resolution precedence
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
 * Every context value resolves in this order: explicit tool argument > session value > config file > git derivation.
-* Config is read from `.mcp-tracker.json` (versioned) with field-level overrides from `.mcp-tracker.local.json` (gitignored). The schema is nested: top-level `repo`, `boardId`; `defaults` (`baseBranch`, `mergeMethod`, `reviewers`, `assignee`, `milestone`, `labels`); `workflow` with an ordered `stages` list (`{key, name}` or `{key, name, id}`) and `on` automation triggers (`createIssue`, `createBranch`, `createPr`, `mergePr`, `reviewApproved`) referencing stage keys. `activeIssue` is valid only in `.mcp-tracker.local.json`.
+* Config is read from `.mcp-tracker.json` (versioned) with field-level overrides from `.mcp-tracker.local.json` (gitignored). The schema is nested: top-level `repo`, `boardId`; `defaults` (`baseBranch`, `mergeMethod`, `deleteBranchOnMerge`, `reviewers`, `assignee`, `milestone`, `labels`); `workflow` with an ordered `stages` list (`{key, name}` or `{key, name, id}`) and `on` automation triggers (`createIssue`, `createBranch`, `createPr`, `mergePr`, `reviewApproved`) referencing stage keys. `activeIssue` is valid only in `.mcp-tracker.local.json`.
 * `typeLabels` maps short issue types to project labels; when configured, `create_issue` accepts `type`, lists the valid keys in its description, and rejects unknown types with the valid keys listed.
 * `defaults` fields merge with the local file winning per field, except `labels`, which concatenates versioned + local with dedupe: project labels stay in the versioned file, personal labels (team, own scope) in the gitignored local one, and issues get both.
 * A stage value given as a name is resolved to the provider's native option ID once per session and cached; a stage given with an explicit `id` skips resolution.
@@ -47,7 +47,7 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
   * `github` = code (requires repo).
   * `gitlab` = code (requires repo).
   * `github-projects` = issue + board + checklist + sub-issues + relationships (requires repo; board tools also require board).
-  * `gitlab` = issue + board + checklist + sub-issues + relationships + labels + milestones (requires repo; board tools also require board).
+  * `gitlab` = issue + board + checklist + sub-issues + relationships + labels + milestones + time tracking + attachments + related-issue/MR reads (requires repo; board tools also require board).
   * `local` = issue + checklist + relationships + labels (requires no scope); milestones are explicitly unsupported.
 * Tools for an undeclared capability are absent from the tool list (not registered-and-failing).
 
@@ -73,6 +73,7 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 * `create_pr`, `update_pr`, `get_pr`, `list_prs`, `get_pr_checks`, `merge_pr` behave as documented in the README.
 * `create_pr` applies `default_base` and `default_reviewers` from context, and injects `Closes #N` into the body when an active issue exists and the body lacks it.
 * `create_pr` accepts an optional `issues` list; each becomes a closing keyword line (`Closes #N`) in the body, covering multiple issues in one call.
+* `create_pr` accepts `attachments` (local file paths, uploaded via the task provider's `attachFile` and appended to the body); a call with attachments when no task provider is configured throws `UnsupportedError`.
 * `update_pr` is the generic PR edit tool: it accepts title, body, state (close/reopen), draft/ready, labels, milestone, and batch reviewer and assignee changes (`add_reviewers`, `remove_reviewers`, `add_assignees`, `remove_assignees`) in one call.
 
 ### RF-PRS.2: PR review tools
@@ -81,6 +82,7 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 * `submit_pr_review` submits a review with an event (`approve`, `request_changes`, `comment`), a body, and optional inline comments referencing `{path, line}` positions from the diff returned by `get_pr_diff`. When `workflow.on.reviewApproved` is configured, an `approve` moves the active issue to that stage; failures surface as warnings.
 * Inline comment positions refer to the remote diff; comments that cannot be positioned produce a `warnings` entry while the rest of the review is submitted.
 * `merge_pr` applies `default_merge_method` from context; the method is validated against `merge | squash | rebase` before the provider call. When `workflow.on.mergePr` is configured, a successful merge moves the active issue to that stage; failures surface as warnings.
+* `merge_pr` applies `default_merge_delete_branch` from context (or an explicit `delete_branch` argument) to delete the source branch after a successful merge. GitLab sets `should_remove_source_branch` on the merge call itself; GitHub issues a follow-up ref-delete call. A delete failure surfaces as a `warnings` entry and never fails the merge, which has already succeeded.
 * When `statusLabels.review` is configured, `create_pr` moves the active issue to that status; failures surface as warnings.
 * `get_pr_checks` truncates long check logs to a bounded tail (never returns unbounded output).
 
@@ -90,9 +92,10 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-CTX.3
 * `list_issues`, `create_issue`, `get_issue`, `update_issue` behave as documented; `get_issue`/`update_issue` use the resolved active issue when `number` is omitted and error clearly when no issue is resolvable.
 * `create_issue` auto-adds the issue to the board when `board_id` is in context.
-* `create_issue` accepts the full desired initial state in one call: optional `blocks`, `blocked_by`, `related` (issue number lists), `duplicate_of`, `parent` (creates as sub-issue), `status` (initial board column), and `fields` (board field values). Post-creation steps (board add, fields, relationships, status) are best-effort; each failure adds a `warnings` entry and never fails the call.
-* `update_issue` supports title, body, labels, assignees, milestone (title or `null` to clear), and state; it also accepts batch relationship operations (`add_blocks`, `remove_blocks`, `add_blocked_by`, `remove_blocked_by`, `add_related`, `remove_related`, `duplicate_of`) applied in the same call, with per-operation failures reported in `warnings`.
+* `create_issue` accepts the full desired initial state in one call: optional `blocks`, `blocked_by`, `related` (issue number lists), `duplicate_of`, `parent` (creates as sub-issue), `status` (initial board column), `fields` (board field values), and `attachments` (local file paths, uploaded and appended to the body before creation). Post-creation steps (board add, fields, relationships, status) are best-effort; each failure adds a `warnings` entry and never fails the call.
+* `update_issue` supports title, body, labels, assignees, milestone (title or `null` to clear), state, and `attachments`; it also accepts batch relationship operations (`add_blocks`, `remove_blocks`, `add_blocked_by`, `remove_blocked_by`, `add_related`, `remove_related`, `duplicate_of`) applied in the same call, with per-operation failures reported in `warnings`. `attachments` are appended to the body when a new `body` is given in the same call, otherwise posted as a separate comment.
 * The milestone title `"$current"` (config default, session context, or tool argument) resolves to the active/open milestone with the nearest upcoming due date; undated and past-due milestones are skipped and the call errors clearly when none qualifies.
+* The assignee (or PR reviewer/assignee) username `"$current"` resolves to the authenticated account (GitLab `GET user`, GitHub `GET /user`), resolved once per provider instance and cached. Not resolved by the `local` provider, which has no authenticated account; `"$current"` there is stored as a literal string.
 * If the board add fails after the issue was created, the tool returns the created issue with a `warnings` entry describing the failure; it does not fail the whole call.
 * `update_issue`: a provider that cannot honor a field returns an explicit error instead of silently dropping it.
 
@@ -113,6 +116,7 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 ### RF-CMT.1: Comment tools
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-CTX.3
 * `add_issue_comment`, `add_pr_comment`, `list_comments` (issue or PR target) behave as documented; issue comments route to the task provider, PR comments to the code provider.
+* `add_issue_comment` and `add_pr_comment` accept `attachments` (local file paths); each is uploaded via the task provider's `attachFile` (project-scoped, not issue-scoped, so it applies to PR comments too) and its markdown link is appended to the comment body before posting.
 
 ## RF-BRD: Board
 
@@ -128,6 +132,13 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 **Priority:** Could Have | **Status:** Accepted | **Dependencies:** RF-PRV.2
 * `list_labels` and `list_milestones` are registered when the issue provider implements the corresponding optional method.
 * A provider without a real milestone concept returns an explicit "not supported" error instead of fabricated entries.
+
+### RF-MTD.2: Time tracking, attachments, and related-item reads (GitLab only)
+**Priority:** Could Have | **Status:** Accepted | **Dependencies:** RF-PRV.2
+* `log_time` logs spent and/or estimated time on an issue via GitLab's native time-tracking endpoints (`add_spent_time`, `time_estimate`), each call independent and best-effort with failures collected into `warnings`. Not implemented for GitHub, which has no native time tracking; the tool is absent for that provider.
+* `upload_attachment` uploads a local file to the project's upload endpoint and returns its markdown link, optionally posting it as a comment on the issue in the same call. Not implemented for GitHub, which has no stable public REST endpoint for arbitrary issue attachments. `attachFile` is project-scoped, not issue-scoped, so `create_issue`, `update_issue`, `add_issue_comment`, `add_pr_comment`, and `create_pr` also accept an `attachments` argument (local file paths) that uploads each file and appends its markdown link to the body/comment in the same call; `update_issue` appends to a new `body` when one is given, otherwise posts the links as a separate comment. Per-file upload failures collect into `warnings`; a call with attachments against a provider lacking `attachFile` throws `UnsupportedError` before any upload runs.
+* `list_linked_items` reads issues and/or merge requests linked to an issue (GitLab's `/links` and `/related_merge_requests` endpoints), filtered by a `type` argument (`issues` | `prs` | `all`, default `all`) so the two link kinds share one tool instead of two. Not implemented for GitHub in this pass; a reliable equivalent needs GraphQL timeline-event parsing, left as a documented gap rather than a partial implementation.
+* These tools are absent from the tool list for providers that don't implement the underlying capability, consistent with RF-PRV.2's "tools for an undeclared capability are absent" rule — never registered-and-failing.
 
 # 2. Non-Functional Requirements
 

@@ -5,7 +5,15 @@ import type { Scope } from '../../core/scope.js';
 import type { ItemId } from '../../core/types.js';
 import type { IssueProvider } from '../issues/capabilities.js';
 import type { CodeProvider } from './capabilities.js';
-import { json, text, REPO_PARAM, resolveScope } from '../../tools/helpers.js';
+import { UnsupportedError } from '../../core/errors.js';
+import {
+  json,
+  text,
+  REPO_PARAM,
+  ATTACHMENTS_PARAM,
+  appendAttachments,
+  resolveScope,
+} from '../../tools/helpers.js';
 
 /** Best-effort status automation driven by config workflow.on triggers. */
 async function applyStageTrigger(
@@ -68,7 +76,7 @@ export function registerCodeTools(
 
   server.tool(
     'create_pr',
-    'Create a pull request. Applies default_base and default_reviewers from context, and appends "Closes #N" for the active issue (and any issues list) when the body does not reference it.',
+    'Create a pull request. Applies default_base and default_reviewers from context, appends "Closes #N" for the active issue (and any issues list) when the body does not reference it, and appends attachment markdown links to the body when given.',
     {
       title: z.string(),
       body: z.string().describe('PR body. "Closes #N" is appended for the active issue when missing.'),
@@ -76,6 +84,7 @@ export function registerCodeTools(
       base: z.string().optional().describe('Base branch; defaults to context default_base.'),
       draft: z.boolean().optional(),
       issues: z.array(z.number().int().positive()).optional().describe('Issues to close; each gets a "Closes #N" line.'),
+      attachments: ATTACHMENTS_PARAM,
       repo: REPO_PARAM,
     },
     async (args) => {
@@ -87,15 +96,24 @@ export function registerCodeTools(
       if (activeId !== null && !new RegExp(`#${activeId}\\b`).test(args.body)) {
         closing.add(activeId);
       }
+
+      const warnings: string[] = [];
+      let body = args.body;
+      if (args.attachments && args.attachments.length > 0) {
+        if (!issue) throw new UnsupportedError('attachments (requires a task/issue provider)');
+        const result = await appendAttachments(issue, { repo }, args.body, args.attachments);
+        body = result.body;
+        warnings.push(...result.warnings);
+      }
+
       const pr = await code.createPR(
         repo,
         args.title,
-        args.body,
+        body,
         args.head,
         base === 'unset' ? undefined : base,
         { issues: [...closing] }
       );
-      const warnings: string[] = [];
       const reviewers = (await ctx.resolveDefaultReviewers()).value;
       if (reviewers !== 'unset' && reviewers.length > 0) {
         const updated = await code.updatePR(repo, pr.number, { add_reviewers: reviewers });
@@ -154,19 +172,26 @@ export function registerCodeTools(
 
   server.tool(
     'merge_pr',
-    'Merge a pull request. Applies default_merge_method from context when method is omitted, and moves the active issue to the workflow.on.mergePr stage when set.',
+    'Merge a pull request. Applies default_merge_method and default_merge_delete_branch from context when omitted, and moves the active issue to the workflow.on.mergePr stage when set.',
     {
       number: z.number().int().positive(),
       method: z.enum(['merge', 'squash', 'rebase']).optional(),
+      delete_branch: z.boolean().optional().describe('Delete the source branch after merge.'),
       repo: REPO_PARAM,
     },
     async (args) => {
       const repo = await repoOf(args.repo);
       const method = args.method ?? (await ctx.resolveDefaultMergeMethod()).value;
-      await code.mergePR(repo, args.number, method === 'unset' ? undefined : method);
+      const deleteBranch =
+        args.delete_branch ?? (await ctx.resolveDefaultMergeDeleteBranch()).value;
+      const { warnings } = await code.mergePR(
+        repo,
+        args.number,
+        method === 'unset' ? undefined : method,
+        { deleteBranch: deleteBranch === 'unset' ? false : deleteBranch }
+      );
       const resolvedIssue = await ctx.resolveActiveIssue();
       const issueId = resolvedIssue.value === 'unset' ? null : resolvedIssue.value;
-      const warnings: string[] = [];
       const scope = await resolveScope(ctx, []);
       await applyStageTrigger(ctx, issue, scope, issueId, 'mergePr', warnings);
       return json({ number: args.number, merged: true, warnings });

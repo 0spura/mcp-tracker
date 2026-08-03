@@ -170,6 +170,25 @@ describe('createGitHubProjectsIssueProvider', () => {
       });
     });
 
+    it('resolves $current to the authenticated login', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify({ login: 'ana' }) },
+        { stdout: JSON.stringify(issueFixture()) },
+      ]);
+
+      const { issue, warnings } = await provider.createIssue(
+        { repo },
+        'A bug',
+        'details',
+        { assignees: ['$current'] }
+      );
+
+      expect(issue.id).toBe('42');
+      expect(warnings).toEqual([]);
+      expect(fake.calls[0].args.join(' ')).toContain('/user');
+      expect(restInput(fake.calls[1])).toMatchObject({ assignees: ['ana'] });
+    });
+
     it('resolves numeric label ids to names', async () => {
       const { provider, fake } = makeProvider([
         {

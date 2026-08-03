@@ -87,7 +87,7 @@ interface ProviderBundle {
 
 `server.ts` merges the code bundle (from `CODE_PROVIDER`) and the task bundle (from `TASK_PROVIDER`) and passes it to `registerTools`. Presence of a bundle member is static typing, not duck-typing; no classes, no `in` checks. A tool domain is registered only when its bundle member exists; a tool errors clearly only when a required scope is unresolvable.
 
-Sub-capabilities (checklist, sub-issues, relationships, labels, milestones) remain optional methods on `IssueProvider`; registration of those tools checks for the method. The same rule applies to `BoardProvider.addIssueToBoard`: only boards with explicit membership (GitHub Projects) implement it; GitLab boards show open issues implicitly and omit the method, so `add_issue_to_board` is not registered for them.
+Sub-capabilities (checklist, sub-issues, relationships, labels, milestones, time tracking, attachments, related-issue/MR reads) remain optional methods on `IssueProvider`; registration of those tools checks for the method. The last three (`logTime`, `attachFile`, `listRelatedIssues`/`listLinkedPRs`) are implemented only by the GitLab provider — GitHub has no native time tracking, no stable public REST endpoint for issue attachments, and no REST equivalent for related-item reads (would need GraphQL timeline-event parsing). `listRelatedIssues`/`listLinkedPRs` share a single tool, `list_linked_items`, filtered by a `type` argument, rather than two near-identical tools. `attachFile` takes only a file path (uploads are project-scoped in GitLab, not issue-scoped), which is why `create_issue`, `update_issue`, `add_issue_comment`, `add_pr_comment`, and `create_pr` can all reuse it directly through a shared `appendAttachments` helper (`src/tools/helpers.ts`) instead of forcing a separate `upload_attachment` call before every create. The same rule applies to `BoardProvider.addIssueToBoard`: only boards with explicit membership (GitHub Projects) implement it; GitLab boards show open issues implicitly and omit the method, so `add_issue_to_board` is not registered for them.
 
 ## Configuration
 
@@ -100,7 +100,7 @@ Nested schema, field-level deep merge of `.mcp-tracker.local.json` over `.mcp-tr
   "repo": "owner/repo",
   "boardId": "1",
   "defaults": {
-    "baseBranch": "main", "mergeMethod": "squash",
+    "baseBranch": "main", "mergeMethod": "squash", "deleteBranchOnMerge": true,
     "reviewers": ["ana"], "assignee": "ana",
     "milestone": "Sprint 12", "labels": ["agent"]
   },

@@ -437,6 +437,23 @@ describe('createGitHubCodeProvider', () => {
       );
     });
 
+    it('resolves $current to the authenticated login for add_reviewers', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(prFixture()) },
+        { stdout: JSON.stringify({ login: 'ana' }) },
+        { stdout: JSON.stringify({}) },
+      ]);
+
+      const { warnings } = await provider.updatePR(repo, 3, {
+        add_reviewers: ['$current'],
+      });
+
+      expect(warnings).toEqual([]);
+      expect(fake.calls[1].args.join(' ')).toContain('/user');
+      const input = JSON.parse(fake.calls[2].input ?? '{}');
+      expect(input.reviewers).toEqual(['ana']);
+    });
+
     it('returns warnings for secondary failures and keeps the primary edit', async () => {
       const { provider, fake } = makeProvider([
         { stdout: JSON.stringify(prFixture()) },
@@ -510,6 +527,36 @@ describe('createGitHubCodeProvider', () => {
       expect(fake.calls[0].args).toContain('PUT');
       const input = JSON.parse(fake.calls[0].input ?? '{}');
       expect(input.merge_method).toBe('squash');
+    });
+
+    it('deletes the head branch after merge when deleteBranch is set', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(prFixture({ head: { ref: 'feature', sha: 'abc123' } })) },
+        { stdout: JSON.stringify({}) },
+        { stdout: JSON.stringify({}) },
+      ]);
+
+      const { warnings } = await provider.mergePR(repo, 3, 'squash', { deleteBranch: true });
+
+      expect(warnings).toEqual([]);
+      expect(fake.calls[2].args.join(' ')).toContain(
+        '/repos/acme/widget/git/refs/heads/feature'
+      );
+      expect(fake.calls[2].args).toContain('DELETE');
+    });
+
+    it('reports a branch-delete failure as a warning without failing the merge', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(prFixture({ head: { ref: 'feature', sha: 'abc123' } })) },
+        { stdout: JSON.stringify({}) },
+        { error: new CliError(1, 'not found', 'gh') },
+      ]);
+
+      const { warnings } = await provider.mergePR(repo, 3, 'squash', { deleteBranch: true });
+
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('delete branch failed');
+      expect(fake.calls).toHaveLength(3);
     });
   });
 

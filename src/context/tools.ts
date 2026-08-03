@@ -23,8 +23,12 @@ export function registerContextTools(server: McpServer, ctx: ContextStore): void
         .enum(['merge', 'squash', 'rebase'])
         .optional()
         .describe('Merge method for merge_pr.'),
-      default_assignee: z.string().optional().describe('Default assignee.'),
-      default_milestone: z.string().optional().describe('Default milestone title.'),
+      default_merge_delete_branch: z
+        .boolean()
+        .optional()
+        .describe('Delete the source branch after merge_pr.'),
+      default_assignee: z.string().optional().describe('Default assignee. "$current" means the authenticated account.'),
+      default_milestone: z.string().optional().describe('Default milestone title. "$current" means the active milestone with the nearest due date.'),
     },
     async (args) => {
       ctx.setContext({
@@ -39,6 +43,7 @@ export function registerContextTools(server: McpServer, ctx: ContextStore): void
         default_base: args.default_base,
         default_reviewers: args.default_reviewers,
         default_merge_method: args.default_merge_method,
+        default_merge_delete_branch: args.default_merge_delete_branch,
         default_assignee: args.default_assignee,
         default_milestone: args.default_milestone,
       });

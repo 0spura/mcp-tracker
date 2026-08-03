@@ -569,4 +569,164 @@ describe('createGitLabIssueProvider', () => {
       expect(fake.calls[0].args.join(' ')).toContain('state=open');
     });
   });
+
+  describe('$current assignee', () => {
+    it('resolves $current to the authenticated user on createIssue', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify({ username: 'ana' }) },
+        { stdout: JSON.stringify([{ id: 1, username: 'ana' }]) },
+        { stdout: JSON.stringify(issueFixture()) },
+      ]);
+
+      const { issue, warnings } = await provider.createIssue(
+        { repo },
+        'A bug',
+        'details',
+        { assignees: ['$current'] }
+      );
+
+      expect(issue.id).toBe('42');
+      expect(warnings).toEqual([]);
+      expect(fake.calls[0].args.join(' ')).toBe('api user');
+      expect(fake.calls[1].args.join(' ')).toContain('users?username=ana');
+    });
+
+    it('resolves $current to the authenticated user on updateIssue', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify({ username: 'ana' }) },
+        { stdout: JSON.stringify([{ id: 1, username: 'ana' }]) },
+        { stdout: JSON.stringify(issueFixture()) },
+      ]);
+
+      const { issue } = await provider.updateIssue(
+        { repo },
+        '42',
+        { assignees: ['$current'] }
+      );
+
+      expect(issue.id).toBe('42');
+      expect(fake.calls[0].args.join(' ')).toBe('api user');
+      expect(fake.calls[1].args.join(' ')).toContain('users?username=ana');
+    });
+
+    it('does not call the user endpoint when $current is absent', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify([{ id: 1, username: 'bob' }]) },
+        { stdout: JSON.stringify(issueFixture()) },
+      ]);
+
+      await provider.createIssue({ repo }, 'A bug', 'details', { assignees: ['bob'] });
+
+      expect(fake.calls[0].args.join(' ')).toContain('users?username=bob');
+    });
+  });
+
+  describe('logTime', () => {
+    it('logs spent and estimated time independently', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify({}) },
+        { stdout: JSON.stringify({}) },
+      ]);
+
+      const { warnings } = await provider.logTime({ repo }, '42', {
+        spend: '1h30m',
+        estimate: '2h',
+      });
+
+      expect(warnings).toEqual([]);
+      expect(fake.calls[0].args.join(' ')).toContain('issues/42/add_spent_time');
+      expect(restFields(fake.calls[0])).toEqual({ duration: '1h30m' });
+      expect(fake.calls[1].args.join(' ')).toContain('issues/42/time_estimate');
+      expect(restFields(fake.calls[1])).toEqual({ duration: '2h' });
+    });
+
+    it('reports a partial failure as a warning without throwing', async () => {
+      const { provider, fake } = makeProvider([
+        { error: new CliError(1, 'not found', 'glab') },
+        { stdout: JSON.stringify({}) },
+      ]);
+
+      const { warnings } = await provider.logTime({ repo }, '42', {
+        spend: '1h',
+        estimate: '2h',
+      });
+
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('add spent time failed');
+      expect(fake.calls).toHaveLength(2);
+    });
+  });
+
+  describe('attachFile', () => {
+    it('uploads a file and returns its markdown link', async () => {
+      const { provider, fake } = makeProvider([
+        {
+          stdout: JSON.stringify({
+            url: '/uploads/abc/screenshot.png',
+            markdown: '[screenshot.png](/uploads/abc/screenshot.png)',
+          }),
+        },
+      ]);
+
+      const result = await provider.attachFile({ repo }, '/tmp/screenshot.png');
+
+      expect(result).toEqual({
+        url: '/uploads/abc/screenshot.png',
+        markdown: '[screenshot.png](/uploads/abc/screenshot.png)',
+      });
+      expect(fake.calls[0].args).toContain('projects/acme%2Fwidget/uploads');
+      expect(fake.calls[0].args).toContain('file=@/tmp/screenshot.png');
+    });
+  });
+
+  describe('listRelatedIssues / listLinkedPRs', () => {
+    it('lists linked issues', async () => {
+      const { provider, fake } = makeProvider([
+        {
+          stdout: JSON.stringify([
+            issueFixture({ iid: 7, title: 'Related bug' }),
+          ]),
+        },
+      ]);
+
+      const related = await provider.listRelatedIssues({ repo }, '42');
+
+      expect(related).toHaveLength(1);
+      expect(related[0].id).toBe('7');
+      expect(fake.calls[0].args.join(' ')).toContain('issues/42/links');
+    });
+
+    it('lists linked merge requests', async () => {
+      const { provider, fake } = makeProvider([
+        {
+          stdout: JSON.stringify([
+            {
+              iid: 9,
+              title: 'Fix bug',
+              description: null,
+              state: 'opened',
+              web_url: 'https://gitlab.com/acme/widget/-/merge_requests/9',
+              source_branch: 'fix-9',
+              target_branch: 'main',
+            },
+          ]),
+        },
+      ]);
+
+      const linked = await provider.listLinkedPRs({ repo }, '42');
+
+      expect(linked).toEqual([
+        {
+          number: 9,
+          title: 'Fix bug',
+          body: '',
+          state: 'open',
+          url: 'https://gitlab.com/acme/widget/-/merge_requests/9',
+          headBranch: 'fix-9',
+          baseBranch: 'main',
+        },
+      ]);
+      expect(fake.calls[0].args.join(' ')).toContain('issues/42/related_merge_requests');
+    });
+  });
 });

@@ -12,6 +12,7 @@ import type {
   ItemId,
 } from '../../core/types.js';
 import type { CodeProvider, ListPRsOptions } from './capabilities.js';
+import { resolveUsernames } from '../../core/user.js';
 import { UnsupportedError } from '../../core/errors.js';
 
 const MAX_DIFF_CHARS = 50_000;
@@ -135,16 +136,27 @@ function injectClosingLines(body: string, issues?: ItemId[]): string {
 }
 
 export function createGitLabCodeProvider(glab: GlabRunner): CodeProvider {
+  let currentUsernamePromise: Promise<string> | undefined;
+  function getCurrentUsername(): Promise<string> {
+    if (!currentUsernamePromise) {
+      currentUsernamePromise = glab
+        .api('user', z.object({ username: z.string() }))
+        .then((u) => u.username);
+    }
+    return currentUsernamePromise;
+  }
+
   return {
     createBranch: (repo, issueId, branchName, base) =>
       createBranch(glab, repo, issueId, branchName, base),
     createPR: (repo, title, body, head, base, opts) =>
       createPR(glab, repo, title, body, head, base, opts),
-    updatePR: (repo, number, opts) => updatePR(glab, repo, number, opts),
+    updatePR: (repo, number, opts) =>
+      updatePR(glab, repo, number, opts, getCurrentUsername),
     getPR: (repo, number) => getPR(glab, repo, number),
     listPRs: (repo, opts) => listPRs(glab, repo, opts),
     getPRChecks: (repo, number) => getPRChecks(glab, repo, number),
-    mergePR: (repo, number, method) => mergePR(glab, repo, number, method),
+    mergePR: (repo, number, method, opts) => mergePR(glab, repo, number, method, opts),
     getPRDiff: (repo, number) => getPRDiff(glab, repo, number),
     submitPRReview: (repo, number, review) =>
       submitPRReview(glab, repo, number, review),
@@ -306,6 +318,7 @@ async function updatePR(
   repo: TrackerRepo,
   number: number,
   opts: UpdatePROptions,
+  getCurrentUsername: () => Promise<string>,
 ): Promise<{ pr: PR; warnings: string[] }> {
   const warnings: string[] = [];
   const ref = projectRef(repo);
@@ -363,7 +376,8 @@ async function updatePR(
 
   if (opts.add_reviewers && opts.add_reviewers.length > 0) {
     try {
-      const ids = await resolveUserIds(glab, opts.add_reviewers);
+      const reviewers = await resolveUsernames(opts.add_reviewers, getCurrentUsername);
+      const ids = await resolveUserIds(glab, reviewers);
       await glab.api(`projects/${ref}/merge_requests/${number}`, z.any(), {
         method: 'PUT',
         fields: { reviewer_ids: ids },
@@ -383,7 +397,8 @@ async function updatePR(
           reviewers: z.array(z.object({ id: z.number() })).optional(),
         }),
       );
-      const removeIds = await resolveUserIds(glab, opts.remove_reviewers);
+      const reviewers = await resolveUsernames(opts.remove_reviewers, getCurrentUsername);
+      const removeIds = await resolveUserIds(glab, reviewers);
       const remaining = (current.reviewers ?? [])
         .map((r) => r.id)
         .filter((id) => !removeIds.includes(id));
@@ -400,7 +415,8 @@ async function updatePR(
 
   if (opts.add_assignees && opts.add_assignees.length > 0) {
     try {
-      const ids = await resolveUserIds(glab, opts.add_assignees);
+      const assignees = await resolveUsernames(opts.add_assignees, getCurrentUsername);
+      const ids = await resolveUserIds(glab, assignees);
       await glab.api(`projects/${ref}/merge_requests/${number}`, z.any(), {
         method: 'PUT',
         fields: { assignee_ids: ids },
@@ -420,7 +436,8 @@ async function updatePR(
           assignees: z.array(z.object({ id: z.number() })).optional(),
         }),
       );
-      const removeIds = await resolveUserIds(glab, opts.remove_assignees);
+      const assignees = await resolveUsernames(opts.remove_assignees, getCurrentUsername);
+      const removeIds = await resolveUserIds(glab, assignees);
       const remaining = (current.assignees ?? [])
         .map((a) => a.id)
         .filter((id) => !removeIds.includes(id));
@@ -565,25 +582,33 @@ async function mergePR(
   repo: TrackerRepo,
   number: number,
   method?: 'merge' | 'squash' | 'rebase',
-): Promise<void> {
+  opts?: { deleteBranch?: boolean },
+): Promise<{ warnings: string[] }> {
   const ref = projectRef(repo);
 
   if (method === 'rebase') {
     await glab.api(`projects/${ref}/merge_requests/${number}/rebase`, z.any(), {
       method: 'PUT',
     });
-    return;
+    const warnings = opts?.deleteBranch
+      ? ['deleteBranch is not supported by the rebase-only merge path']
+      : [];
+    return { warnings };
   }
 
   const fields: Record<string, unknown> = {};
   if (method === 'squash') {
     fields.squash = true;
   }
+  if (opts?.deleteBranch) {
+    fields.should_remove_source_branch = true;
+  }
 
   await glab.api(`projects/${ref}/merge_requests/${number}/merge`, z.any(), {
     method: 'PUT',
     fields,
   });
+  return { warnings: [] };
 }
 
 async function getPRDiff(

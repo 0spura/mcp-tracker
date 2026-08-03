@@ -8,6 +8,7 @@ import type {
   Comment,
   Label,
   Milestone,
+  PR,
 } from '../../core/types.js';
 
 export interface ListIssuesOptions {
@@ -60,4 +61,16 @@ export interface IssueProvider {
     scope: Scope,
     state?: 'open' | 'closed' | 'all'
   ): Promise<Milestone[]>;
+
+  logTime?(
+    scope: Scope,
+    id: ItemId,
+    opts: { spend?: string; estimate?: string }
+  ): Promise<{ warnings: string[] }>;
+
+  /** Uploads are project-scoped, not issue-scoped: no issue id involved. */
+  attachFile?(scope: Scope, filePath: string): Promise<{ url: string; markdown: string }>;
+
+  listRelatedIssues?(scope: Scope, id: ItemId): Promise<Issue[]>;
+  listLinkedPRs?(scope: Scope, id: ItemId): Promise<PR[]>;
 }

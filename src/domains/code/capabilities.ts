@@ -42,8 +42,9 @@ export interface CodeProvider {
   mergePR(
     repo: TrackerRepo,
     number: number,
-    method?: 'merge' | 'squash' | 'rebase'
-  ): Promise<void>;
+    method?: 'merge' | 'squash' | 'rebase',
+    opts?: { deleteBranch?: boolean }
+  ): Promise<{ warnings: string[] }>;
   getPRDiff(repo: TrackerRepo, number: number): Promise<string>;
   submitPRReview(repo: TrackerRepo, number: number, review: PRReview): Promise<void>;
   addPRComment(repo: TrackerRepo, number: number, body: string): Promise<void>;

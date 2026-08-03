@@ -18,6 +18,7 @@ export interface ContextSnapshot {
   default_base: ResolvedContextValue<string>;
   default_reviewers: ResolvedContextValue<string[]>;
   default_merge_method: ResolvedContextValue<MergeMethod>;
+  default_merge_delete_branch: ResolvedContextValue<boolean>;
   default_assignee: ResolvedContextValue<string>;
   default_milestone: ResolvedContextValue<string>;
   default_labels?: ResolvedContextValue<string[]>;
@@ -31,6 +32,7 @@ export interface SetContextOptions {
   default_base?: string;
   default_reviewers?: string[];
   default_merge_method?: MergeMethod;
+  default_merge_delete_branch?: boolean;
   default_assignee?: string;
   default_milestone?: string;
 }
@@ -42,6 +44,7 @@ interface SessionContext {
   defaultBase: string | null;
   defaultReviewers: string[] | null;
   defaultMergeMethod: MergeMethod | null;
+  defaultMergeDeleteBranch: boolean | null;
   defaultAssignee: string | null;
   defaultMilestone: string | null;
 }
@@ -61,6 +64,7 @@ export class ContextStore {
     defaultBase: null,
     defaultReviewers: null,
     defaultMergeMethod: null,
+    defaultMergeDeleteBranch: null,
     defaultAssignee: null,
     defaultMilestone: null,
   };
@@ -105,6 +109,9 @@ export class ContextStore {
     }
     if (partial.default_merge_method !== undefined) {
       this.session.defaultMergeMethod = partial.default_merge_method;
+    }
+    if (partial.default_merge_delete_branch !== undefined) {
+      this.session.defaultMergeDeleteBranch = partial.default_merge_delete_branch;
     }
     if (partial.default_assignee !== undefined) {
       this.session.defaultAssignee = partial.default_assignee;
@@ -178,6 +185,18 @@ export class ContextStore {
     );
   }
 
+  async resolveDefaultMergeDeleteBranch(
+    explicit?: boolean
+  ): Promise<ResolvedContextValue<boolean>> {
+    const config = await this.configPromise;
+    return this.resolve(
+      explicit,
+      this.session.defaultMergeDeleteBranch,
+      config.defaults?.deleteBranchOnMerge,
+      async () => 'unset'
+    );
+  }
+
   async resolveDefaultAssignee(
     explicit?: string
   ): Promise<ResolvedContextValue<string>> {
@@ -212,6 +231,7 @@ export class ContextStore {
       defaultBase,
       defaultReviewers,
       defaultMergeMethod,
+      defaultMergeDeleteBranch,
       defaultAssignee,
       defaultMilestone,
     ] = await Promise.all([
@@ -221,6 +241,7 @@ export class ContextStore {
       this.resolveDefaultBase(),
       this.resolveDefaultReviewers(),
       this.resolveDefaultMergeMethod(),
+      this.resolveDefaultMergeDeleteBranch(),
       this.resolveDefaultAssignee(),
       this.resolveDefaultMilestone(),
     ]);
@@ -232,6 +253,7 @@ export class ContextStore {
       default_base: defaultBase,
       default_reviewers: defaultReviewers,
       default_merge_method: defaultMergeMethod,
+      default_merge_delete_branch: defaultMergeDeleteBranch,
       default_assignee: defaultAssignee,
       default_milestone: defaultMilestone,
     };

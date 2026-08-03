@@ -29,6 +29,7 @@ const workflowSchema = z.object({
 const defaultsSchema = z.object({
   baseBranch: z.string().optional(),
   mergeMethod: mergeMethodSchema.optional(),
+  deleteBranchOnMerge: z.boolean().optional(),
   reviewers: z.array(z.string()).optional(),
   assignee: z.string().optional(),
   milestone: z.string().optional(),
@@ -57,6 +58,7 @@ const localRawSchema = z.object(localShape).strict();
 export interface TrackerDefaults {
   baseBranch?: string;
   mergeMethod?: MergeMethod;
+  deleteBranchOnMerge?: boolean;
   reviewers?: string[];
   assignee?: string;
   milestone?: string;
@@ -193,6 +195,7 @@ function mergeDefaults(
   const keys: Array<keyof TrackerDefaults> = [
     'baseBranch',
     'mergeMethod',
+    'deleteBranchOnMerge',
     'reviewers',
     'assignee',
     'milestone',

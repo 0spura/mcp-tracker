@@ -8,6 +8,8 @@ import {
   text,
   REPO_PARAM,
   ISSUE_NUMBER_PARAM,
+  ATTACHMENTS_PARAM,
+  appendAttachments,
   resolveIssueId,
   resolveScope,
 } from '../../tools/helpers.js';
@@ -21,23 +23,35 @@ export function registerCommentTools(
 ): void {
   server.tool(
     'add_issue_comment',
-    'Add a comment to an issue. Defaults to the active issue.',
-    { body: z.string(), number: ISSUE_NUMBER_PARAM, repo: REPO_PARAM },
+    'Add a comment to an issue, with optional file attachments appended as markdown links. Defaults to the active issue.',
+    {
+      body: z.string(),
+      attachments: ATTACHMENTS_PARAM,
+      number: ISSUE_NUMBER_PARAM,
+      repo: REPO_PARAM,
+    },
     async (args) => {
       const scope = await resolveScope(ctx, requires, args.repo);
-      await issue.addIssueComment(scope, await resolveIssueId(ctx, args.number), args.body);
-      return text('comment added');
+      const { body, warnings } = await appendAttachments(issue, scope, args.body, args.attachments);
+      await issue.addIssueComment(scope, await resolveIssueId(ctx, args.number), body);
+      return warnings.length > 0 ? json({ warnings }) : text('comment added');
     }
   );
 
   server.tool(
     'add_pr_comment',
-    'Add a comment to a pull request.',
-    { number: z.number().int().positive(), body: z.string(), repo: REPO_PARAM },
+    'Add a comment to a pull request, with optional file attachments appended as markdown links.',
+    {
+      number: z.number().int().positive(),
+      body: z.string(),
+      attachments: ATTACHMENTS_PARAM,
+      repo: REPO_PARAM,
+    },
     async (args) => {
       const scope = await resolveScope(ctx, ['repo'], args.repo);
-      await code.addPRComment(scope.repo!, args.number, args.body);
-      return text('comment added');
+      const { body, warnings } = await appendAttachments(issue, scope, args.body, args.attachments);
+      await code.addPRComment(scope.repo!, args.number, body);
+      return warnings.length > 0 ? json({ warnings }) : text('comment added');
     }
   );
 

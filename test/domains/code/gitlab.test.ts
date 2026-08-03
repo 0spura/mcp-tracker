@@ -341,6 +341,23 @@ describe('createGitLabCodeProvider', () => {
       expect(fake.calls[6].args.join(' ')).toContain('users?username=bob');
     });
 
+    it('resolves $current to the authenticated user for add_reviewers', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(mrFixture()) },
+        { stdout: JSON.stringify({ username: 'ana' }) },
+        { stdout: JSON.stringify([{ id: 11 }]) },
+        { stdout: JSON.stringify({}) },
+      ]);
+
+      const { warnings } = await provider.updatePR(repo, 3, {
+        add_reviewers: ['$current'],
+      });
+
+      expect(warnings).toEqual([]);
+      expect(fake.calls[1].args.join(' ')).toBe('api user');
+      expect(fake.calls[2].args.join(' ')).toContain('users?username=ana');
+    });
+
     it('returns warnings for secondary failures and keeps the primary edit', async () => {
       const { provider, fake } = makeProvider([
         { stdout: JSON.stringify(mrFixture()) },
@@ -437,6 +454,33 @@ describe('createGitLabCodeProvider', () => {
       expect(fake.calls[0].args.join(' ')).toContain(
         'merge_requests/3/rebase'
       );
+    });
+
+    it('requests source branch removal when deleteBranch is set', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify({}) },
+      ]);
+
+      const { warnings } = await provider.mergePR(repo, 3, 'squash', { deleteBranch: true });
+
+      expect(warnings).toEqual([]);
+      expect(restFields(fake.calls[0])).toEqual({
+        squash: true,
+        should_remove_source_branch: true,
+      });
+    });
+
+    it('warns when deleteBranch is requested on a rebase merge', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify({}) },
+      ]);
+
+      const { warnings } = await provider.mergePR(repo, 3, 'rebase', { deleteBranch: true });
+
+      expect(warnings).toEqual([
+        'deleteBranch is not supported by the rebase-only merge path',
+      ]);
+      expect(fake.calls[0].args.join(' ')).toContain('merge_requests/3/rebase');
     });
   });
 
