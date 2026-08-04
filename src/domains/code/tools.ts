@@ -236,7 +236,7 @@ export function registerCodeTools(
       delete_branch: z
         .boolean()
         .optional()
-        .describe("Delete the source branch after merge."),
+        .describe("Omit this field if it is not explicitly specified"),
       repo: REPO_PARAM,
     },
     async (args) => {
