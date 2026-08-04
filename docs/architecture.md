@@ -151,8 +151,8 @@ project configuration, which wins over git derivation.
 
 Rule: Branch naming | Source: RF-BRN.1
 Given create_branch with an issue number | When the branch is created | Then the name
-is <number>-<slug-of-title> and the branch is linked to the issue. Existing linked
-branch → return it, no error.
+is derived inside the provider as <number>-<slug-of-title> and linked to the issue.
+Existing linked branch → return it, no error.
 
 Rule: PR body closes issue | Source: RF-PRS.1
 Given explicit issue numbers | When create_pr builds the body | Then 'Closes #N' is

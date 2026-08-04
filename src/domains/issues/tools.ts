@@ -16,6 +16,11 @@ import {
   resolveScope,
 } from '../../tools/helpers.js';
 
+export function summarizeIssue(issue: Issue): Omit<Issue, 'body'> {
+  const { body: _body, ...summary } = issue;
+  return summary;
+}
+
 export function registerIssueTools(
   server: McpServer,
   issue: IssueProvider,
@@ -28,7 +33,7 @@ export function registerIssueTools(
 
   server.tool(
     'list_issues',
-    'Find issues.',
+    'Find issue summaries.',
     {
       state: z.enum(['open', 'closed', 'all']).optional(),
       labels: z.array(z.string()).optional(),
@@ -36,15 +41,15 @@ export function registerIssueTools(
       limit: z.number().int().positive().max(100).default(10),
       repo: REPO_PARAM,
     },
-    async (args) =>
-      json(
-        await issue.listIssues(await scopeOf(args.repo), {
+    async (args) => {
+      const issues = await issue.listIssues(await scopeOf(args.repo), {
           state: args.state,
           labels: args.labels,
           assignee: args.assignee,
           limit: args.limit,
-        })
-      )
+        });
+      return json(issues.map(summarizeIssue));
+    }
   );
 
   const typeKeys = catalog?.issueTypes.map((type) => type.name) ?? [];
@@ -148,7 +153,7 @@ export function registerIssueTools(
 
   server.tool(
     'get_issue',
-    'Get an issue.',
+    'Get a full issue.',
     { number: ISSUE_NUMBER_PARAM, repo: REPO_PARAM },
     async (args) =>
       json(await issue.getIssue(await scopeOf(args.repo), String(args.number)))

@@ -101,6 +101,8 @@ Values applied automatically when a tool does not receive the argument explicitl
 
 Native issue types, labels, open milestones, and board fields are loaded once during startup and exposed directly in tool schemas. `issue_fields` targets native GitHub Issue Fields; `fields` targets Projects V2 fields.
 
+`list_issues` and `list_prs` return summaries without bodies. Use the corresponding `get_*` tool only for the selected item. `create_branch` derives its name from the required issue number and title inside the provider.
+
 ### Workflow
 
 Defines status columns and the automations that move issues between them:

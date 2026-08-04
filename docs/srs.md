@@ -62,7 +62,7 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 ### RF-BRN.1: Create branch
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-CTX.2
 * `create_branch` creates a branch off the repo's default branch.
-* `issue_number` is required; the branch is linked to that issue and named `<number>-<slug>`.
+* `issue_number` is required; the provider reads the title internally and creates `<number>-<slug>` without exposing a branch-name argument.
 * Creating an already-existing linked branch returns the existing branch instead of failing (idempotent).
 * When `statusLabels.doing` is configured, the issue status moves to that label; automation failures surface as a warning field in the response, never silently.
 
@@ -88,7 +88,7 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 
 ### RF-ISS.1: Issue CRUD
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-CTX.3
-* `list_issues`, `create_issue`, `get_issue`, `update_issue` behave as documented; issue reads and mutations require `number`.
+* `list_issues` returns bounded summaries without bodies. `get_issue` returns the selected full item; issue reads and mutations require `number`.
 * `create_issue` auto-adds the issue to the configured board.
 * `create_issue` accepts relationships, parent, board fields, and attachments in one call. Initial status comes only from `workflow.on.createIssue`. Secondary failures are returned as warnings.
 * `update_issue` consolidates metadata, attachments, relationships, parent assignment, and board fields. It adds the issue to an explicit-membership board when fields are supplied and membership is missing.

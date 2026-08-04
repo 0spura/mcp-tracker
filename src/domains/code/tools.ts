@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ContextStore } from '../../context/store.js';
 import type { Scope } from '../../core/scope.js';
-import type { ItemId } from '../../core/types.js';
+import type { ItemId, PR } from '../../core/types.js';
 import type { IssueCatalog, IssueProvider } from '../issues/capabilities.js';
 import type { CodeProvider } from './capabilities.js';
 import { UnsupportedError } from '../../core/errors.js';
@@ -14,6 +14,11 @@ import {
   appendAttachments,
   resolveScope,
 } from '../../tools/helpers.js';
+
+export function summarizePR(pr: PR): Omit<PR, 'body'> {
+  const { body: _body, ...summary } = pr;
+  return summary;
+}
 
 /** Best-effort status automation driven by config workflow.on triggers. */
 async function applyStageTrigger(
@@ -64,9 +69,8 @@ export function registerCodeTools(
 
   server.tool(
     'create_branch',
-    'Create or reuse a branch linked to an issue.',
+    'Create or reuse an issue-linked branch.',
     {
-      name: z.string().describe('Branch slug.'),
       issue_number: z.number().int().positive().describe('Issue number.'),
       base: z.string().optional().describe('Base branch; defaults to the repo default branch.'),
       repo: REPO_PARAM,
@@ -74,7 +78,7 @@ export function registerCodeTools(
     async (args) => {
       const repo = await repoOf(args.repo);
       const issueId = String(args.issue_number);
-      const result = await code.createBranch(repo, issueId, args.name, args.base);
+      const result = await code.createBranch(repo, issueId, '', args.base);
       const warnings: string[] = [];
       const scope = await resolveScope(ctx, []);
       await applyStageTrigger(ctx, issue, scope, [issueId], 'createBranch', warnings);
@@ -151,19 +155,25 @@ export function registerCodeTools(
     }
   );
 
-  server.tool('get_pr', 'Get pull request details.', { number: z.number().int().positive(), repo: REPO_PARAM }, async (args) =>
+  server.tool('get_pr', 'Get a full pull request.', { number: z.number().int().positive(), repo: REPO_PARAM }, async (args) =>
     json(await code.getPR(await repoOf(args.repo), args.number))
   );
 
   server.tool(
     'list_prs',
-    'Find pull requests.',
+    'Find pull request summaries.',
     {
       state: z.enum(['open', 'closed', 'all']).optional(),
       limit: z.number().int().positive().max(100).default(10),
       repo: REPO_PARAM,
     },
-    async (args) => json(await code.listPRs(await repoOf(args.repo), { state: args.state, limit: args.limit }))
+    async (args) => {
+      const prs = await code.listPRs(await repoOf(args.repo), {
+        state: args.state,
+        limit: args.limit,
+      });
+      return json(prs.map(summarizePR));
+    }
   );
 
   server.tool(
