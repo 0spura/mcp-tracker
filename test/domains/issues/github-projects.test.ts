@@ -76,6 +76,28 @@ function graphqlVariables(call: { args: string[]; input?: string }) {
 }
 
 describe('createGitHubProjectsIssueProvider', () => {
+  describe('listIssueTypes', () => {
+    it('lists and caches repository issue types', async () => {
+      const { provider, fake } = makeProvider([
+        {
+          stdout: JSON.stringify([
+            { id: 1, name: 'Bug', description: 'Unexpected behavior', color: 'red' },
+          ]),
+        },
+      ]);
+
+      const first = await provider.listIssueTypes!({ repo });
+      const second = await provider.listIssueTypes!({ repo });
+
+      expect(first).toEqual([
+        { id: 1, name: 'Bug', description: 'Unexpected behavior', color: 'red' },
+      ]);
+      expect(second).toEqual(first);
+      expect(fake.calls).toHaveLength(1);
+      expect(fake.calls[0].args.join(' ')).toContain('/repos/acme/widget/issue-types');
+    });
+  });
+
   describe('listIssues', () => {
     it('lists issues and normalizes ids and state', async () => {
       const { provider, fake } = makeProvider([
@@ -170,6 +192,35 @@ describe('createGitHubProjectsIssueProvider', () => {
       });
     });
 
+    it('sets the native issue type and organization issue fields', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(issueFixture({ type: 'Infrastructure' })) },
+        {
+          stdout: JSON.stringify([
+            { id: 10, name: 'Priority', data_type: 'single_select' },
+            { id: 11, name: 'Effort', data_type: 'single_select' },
+          ]),
+        },
+        { stdout: JSON.stringify({}) },
+      ]);
+
+      await provider.createIssue({ repo }, 'An issue', 'details', {
+        type: 'Infrastructure',
+        issueFields: { Priority: 'Urgent', Effort: 'High' },
+      });
+
+      expect(restInput(fake.calls[0])).toMatchObject({
+        type: 'Infrastructure',
+      });
+      expect(fake.calls[1].args.join(' ')).toContain('/orgs/acme/issue-fields');
+      expect(restInput(fake.calls[2])).toEqual({
+        issue_field_values: [
+          { field_id: 10, value: 'Urgent' },
+          { field_id: 11, value: 'High' },
+        ],
+      });
+    });
+
     it('resolves $current to the authenticated login', async () => {
       const { provider, fake } = makeProvider([
         { stdout: JSON.stringify({ login: 'ana' }) },
@@ -242,7 +293,7 @@ describe('createGitHubProjectsIssueProvider', () => {
         }),
         { stdout: JSON.stringify({}) },
         graphqlOk({ repository: { issue: { id: 'I_7' } } }),
-        graphqlOk({ addBlockedBy: { id: 'DEP_1' } }),
+        graphqlOk({ addBlockedBy: { blockingIssue: { id: 'I_42' }, issue: { id: 'I_7' } } }),
       ]);
 
       const { issue, warnings } = await provider.createIssue(
@@ -280,7 +331,7 @@ describe('createGitHubProjectsIssueProvider', () => {
       expect(graphqlQuery(fake.calls[5])).toContain('repository(owner: $owner, name: $repo)');
       expect(graphqlQuery(fake.calls[6])).toContain('addBlockedBy');
       const relVars = graphqlVariables(fake.calls[6]);
-      expect(relVars).toEqual({ blockerId: 'I_42', blockedId: 'I_7' });
+      expect(relVars).toEqual({ blockingIssueId: 'I_42', issueId: 'I_7' });
     });
 
     it('returns the issue with a warning when board add fails', async () => {
@@ -304,6 +355,24 @@ describe('createGitHubProjectsIssueProvider', () => {
   });
 
   describe('updateIssue', () => {
+    it('updates the native issue type and organization issue fields', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(issueFixture()) },
+        { stdout: JSON.stringify([{ id: 10, name: 'Priority', data_type: 'single_select' }]) },
+        { stdout: JSON.stringify({}) },
+      ]);
+
+      await provider.updateIssue({ repo }, '42', {
+        type: 'Bug',
+        issueFields: { Priority: 'Urgent' },
+      });
+
+      expect(restInput(fake.calls[0])).toEqual({ type: 'Bug' });
+      expect(restInput(fake.calls[2])).toEqual({
+        issue_field_values: [{ field_id: 10, value: 'Urgent' }],
+      });
+    });
+
     it('patches primary fields and returns warnings for secondary failures', async () => {
       const { provider, fake } = makeProvider([
         { stdout: JSON.stringify(issueFixture()) },
@@ -590,7 +659,7 @@ describe('createGitHubProjectsIssueProvider', () => {
       const { provider, fake } = makeProvider([
         graphqlOk({ repository: { issue: { id: 'I_42' } } }),
         graphqlOk({ repository: { issue: { id: 'I_7' } } }),
-        graphqlOk({ addBlockedBy: { id: 'DEP_1' } }),
+        graphqlOk({ addBlockedBy: { blockingIssue: { id: 'I_42' }, issue: { id: 'I_7' } } }),
       ]);
 
       const result = await provider.setRelationship({ repo }, '42', 'blocks', '7');
@@ -598,8 +667,8 @@ describe('createGitHubProjectsIssueProvider', () => {
       expect(result.mechanism).toBe('native');
       expect(graphqlQuery(fake.calls[2])).toContain('addBlockedBy');
       expect(graphqlVariables(fake.calls[2])).toEqual({
-        blockerId: 'I_42',
-        blockedId: 'I_7',
+        blockingIssueId: 'I_42',
+        issueId: 'I_7',
       });
     });
 
@@ -607,15 +676,15 @@ describe('createGitHubProjectsIssueProvider', () => {
       const { provider, fake } = makeProvider([
         graphqlOk({ repository: { issue: { id: 'I_42' } } }),
         graphqlOk({ repository: { issue: { id: 'I_7' } } }),
-        graphqlOk({ addBlockedBy: { id: 'DEP_1' } }),
+        graphqlOk({ addBlockedBy: { blockingIssue: { id: 'I_7' }, issue: { id: 'I_42' } } }),
       ]);
 
       const result = await provider.setRelationship({ repo }, '42', 'blocked_by', '7');
 
       expect(result.mechanism).toBe('native');
       expect(graphqlVariables(fake.calls[2])).toEqual({
-        blockerId: 'I_7',
-        blockedId: 'I_42',
+        blockingIssueId: 'I_7',
+        issueId: 'I_42',
       });
     });
 

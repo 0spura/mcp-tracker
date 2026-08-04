@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ContextStore } from '../../context/store.js';
 import type { Scope } from '../../core/scope.js';
 import type { ItemId } from '../../core/types.js';
-import type { IssueProvider } from '../issues/capabilities.js';
+import type { IssueCatalog, IssueProvider } from '../issues/capabilities.js';
 import type { CodeProvider } from './capabilities.js';
 import { UnsupportedError } from '../../core/errors.js';
 import {
@@ -20,11 +20,11 @@ async function applyStageTrigger(
   ctx: ContextStore,
   issue: IssueProvider | undefined,
   scope: Scope,
-  issueId: ItemId | null,
+  issueIds: ItemId[],
   event: 'createBranch' | 'createPr' | 'mergePr' | 'reviewApproved',
   warnings: string[]
 ): Promise<void> {
-  if (!issue || issueId === null) return;
+  if (!issue || issueIds.length === 0) return;
   const config = await ctx.getConfig();
   const stageKey = config.workflow?.on?.[event];
   if (!stageKey) return;
@@ -33,10 +33,12 @@ async function applyStageTrigger(
     warnings.push(`workflow.on.${event} points to unknown stage "${stageKey}"`);
     return;
   }
-  try {
-    await issue.setIssueStatus(scope, issueId, stage.id ?? stage.name);
-  } catch (err) {
-    warnings.push(`could not move issue #${issueId} to "${stage.name}": ${(err as Error).message}`);
+  for (const issueId of issueIds) {
+    try {
+      await issue.setIssueStatus(scope, issueId, stage.id ?? stage.name);
+    } catch (err) {
+      warnings.push(`could not move issue #${issueId} to "${stage.name}": ${(err as Error).message}`);
+    }
   }
 }
 
@@ -44,58 +46,59 @@ export function registerCodeTools(
   server: McpServer,
   code: CodeProvider,
   ctx: ContextStore,
-  issue?: IssueProvider
+  issue?: IssueProvider,
+  catalog?: IssueCatalog
 ): void {
   const repoOf = async (explicit?: string) => {
     const scope = await resolveScope(ctx, ['repo'], explicit);
     return scope.repo!;
   };
+  const labels = catalog?.labels ?? [];
+  const labelSchema = labels.length > 0
+    ? z.enum(labels as [string, ...string[]])
+    : z.string();
+  const milestones = catalog?.milestones ?? [];
+  const milestoneSchema = milestones.length > 0
+    ? z.enum(milestones as [string, ...string[]])
+    : z.string();
 
   server.tool(
     'create_branch',
-    'Create a branch off the default branch. With an issue (explicit or active), the branch is named <number>-<slug> and linked to the issue. Idempotent: an existing branch is returned, not an error.',
+    'Create or reuse a branch linked to an issue.',
     {
-      name: z.string().describe('Branch name when not linked to an issue; base of the slug when linked.'),
-      issue_number: z.number().int().positive().optional().describe('Issue to link; defaults to active issue.'),
+      name: z.string().describe('Branch slug.'),
+      issue_number: z.number().int().positive().describe('Issue number.'),
       base: z.string().optional().describe('Base branch; defaults to the repo default branch.'),
       repo: REPO_PARAM,
     },
     async (args) => {
       const repo = await repoOf(args.repo);
-      const resolvedIssue = await ctx.resolveActiveIssue(
-        args.issue_number !== undefined ? String(args.issue_number) : undefined
-      );
-      const issueId = resolvedIssue.value === 'unset' ? null : resolvedIssue.value;
+      const issueId = String(args.issue_number);
       const result = await code.createBranch(repo, issueId, args.name, args.base);
       const warnings: string[] = [];
       const scope = await resolveScope(ctx, []);
-      await applyStageTrigger(ctx, issue, scope, issueId, 'createBranch', warnings);
+      await applyStageTrigger(ctx, issue, scope, [issueId], 'createBranch', warnings);
       return json({ ...result, warnings });
     }
   );
 
   server.tool(
     'create_pr',
-    'Create a pull request. Applies default_base and default_reviewers from context, appends "Closes #N" for the active issue (and any issues list) when the body does not reference it, and appends attachment markdown links to the body when given.',
+    'Create a pull request linked to issues.',
     {
       title: z.string(),
-      body: z.string().describe('PR body. "Closes #N" is appended for the active issue when missing.'),
+      body: z.string(),
       head: z.string().describe('Head branch.'),
-      base: z.string().optional().describe('Base branch; defaults to context default_base.'),
+      base: z.string().optional().describe('Base branch; defaults to project configuration.'),
       draft: z.boolean().optional(),
-      issues: z.array(z.number().int().positive()).optional().describe('Issues to close; each gets a "Closes #N" line.'),
+      issues: z.array(z.number().int().positive()).min(1).describe('Issues closed by the PR.'),
       attachments: ATTACHMENTS_PARAM,
       repo: REPO_PARAM,
     },
     async (args) => {
       const repo = await repoOf(args.repo);
       const base = args.base ?? (await ctx.resolveDefaultBase()).value;
-      const resolvedIssue = await ctx.resolveActiveIssue();
-      const activeId = resolvedIssue.value === 'unset' ? null : resolvedIssue.value;
-      const closing = new Set<string>((args.issues ?? []).map(String));
-      if (activeId !== null && !new RegExp(`#${activeId}\\b`).test(args.body)) {
-        closing.add(activeId);
-      }
+      const closing = new Set<string>(args.issues.map(String));
 
       const warnings: string[] = [];
       let body = args.body;
@@ -120,22 +123,22 @@ export function registerCodeTools(
         warnings.push(...updated.warnings);
       }
       const scope = await resolveScope(ctx, []);
-      await applyStageTrigger(ctx, issue, scope, activeId, 'createPr', warnings);
+      await applyStageTrigger(ctx, issue, scope, [...closing], 'createPr', warnings);
       return json({ ...pr, warnings });
     }
   );
 
   server.tool(
     'update_pr',
-    'Generic PR edit: title, body, state, draft, labels, milestone, and batch reviewer/assignee changes in one call. Batch failures are reported in warnings, not thrown.',
+    'Update a pull request.',
     {
       number: z.number().int().positive(),
       title: z.string().optional(),
       body: z.string().optional(),
       state: z.enum(['open', 'closed']).optional(),
       draft: z.boolean().optional().describe('true = convert to draft; false = mark ready for review.'),
-      labels: z.array(z.string()).optional().describe('Replaces the label set.'),
-      milestone: z.string().optional(),
+      labels: z.array(labelSchema).optional(),
+      milestone: milestoneSchema.optional(),
       add_reviewers: z.array(z.string()).optional(),
       remove_reviewers: z.array(z.string()).optional(),
       add_assignees: z.array(z.string()).optional(),
@@ -154,10 +157,10 @@ export function registerCodeTools(
 
   server.tool(
     'list_prs',
-    'List pull requests by state.',
+    'Find pull requests.',
     {
       state: z.enum(['open', 'closed', 'all']).optional(),
-      limit: z.number().int().positive().optional(),
+      limit: z.number().int().positive().max(100).default(10),
       repo: REPO_PARAM,
     },
     async (args) => json(await code.listPRs(await repoOf(args.repo), { state: args.state, limit: args.limit }))
@@ -165,16 +168,17 @@ export function registerCodeTools(
 
   server.tool(
     'get_pr_checks',
-    'Get CI check results for a PR. Failing logs are truncated to a bounded tail.',
+    'Get pull request checks.',
     { number: z.number().int().positive(), repo: REPO_PARAM },
     async (args) => json(await code.getPRChecks(await repoOf(args.repo), args.number))
   );
 
   server.tool(
     'merge_pr',
-    'Merge a pull request. Applies default_merge_method and default_merge_delete_branch from context when omitted, and moves the active issue to the workflow.on.mergePr stage when set.',
+    'Merge a pull request.',
     {
       number: z.number().int().positive(),
+      issues: z.array(z.number().int().positive()).min(1),
       method: z.enum(['merge', 'squash', 'rebase']).optional(),
       delete_branch: z.boolean().optional().describe('Delete the source branch after merge.'),
       repo: REPO_PARAM,
@@ -190,26 +194,25 @@ export function registerCodeTools(
         method === 'unset' ? undefined : method,
         { deleteBranch: deleteBranch === 'unset' ? false : deleteBranch }
       );
-      const resolvedIssue = await ctx.resolveActiveIssue();
-      const issueId = resolvedIssue.value === 'unset' ? null : resolvedIssue.value;
       const scope = await resolveScope(ctx, []);
-      await applyStageTrigger(ctx, issue, scope, issueId, 'mergePr', warnings);
+      await applyStageTrigger(ctx, issue, scope, args.issues.map(String), 'mergePr', warnings);
       return json({ number: args.number, merged: true, warnings });
     }
   );
 
   server.tool(
     'get_pr_diff',
-    'Get the PR diff as seen remotely. Use these exact positions for submit_pr_review inline comments. Truncated diffs are marked.',
+    'Get a pull request diff.',
     { number: z.number().int().positive(), repo: REPO_PARAM },
     async (args) => text(await code.getPRDiff(await repoOf(args.repo), args.number))
   );
 
   server.tool(
     'submit_pr_review',
-    'Submit a PR review: approve, request_changes, or comment, with a body and optional inline comments. Inline comments use {path, line} positions from get_pr_diff. An approve moves the active issue to the workflow.on.reviewApproved stage when set.',
+    'Submit a pull request review.',
     {
       number: z.number().int().positive(),
+      issues: z.array(z.number().int().positive()).min(1),
       event: z.enum(['approve', 'request_changes', 'comment']),
       body: z.string().optional(),
       comments: z
@@ -226,10 +229,8 @@ export function registerCodeTools(
       });
       const warnings: string[] = [];
       if (args.event === 'approve') {
-        const resolvedIssue = await ctx.resolveActiveIssue();
-        const issueId = resolvedIssue.value === 'unset' ? null : resolvedIssue.value;
         const scope = await resolveScope(ctx, []);
-        await applyStageTrigger(ctx, issue, scope, issueId, 'reviewApproved', warnings);
+        await applyStageTrigger(ctx, issue, scope, args.issues.map(String), 'reviewApproved', warnings);
       }
       return json({ number: args.number, reviewed: args.event, warnings });
     }

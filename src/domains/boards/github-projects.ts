@@ -53,13 +53,23 @@ export function createCaches() {
   const fieldCache = new Map<string, Promise<BoardFields>>();
   const boardIdCache = new Map<string, Promise<string>>();
 
-  function resolveBoardId(gh: GhRunner, boardId: string): Promise<string> {
-    const cached = boardIdCache.get(boardId);
+  function resolveBoardId(
+    gh: GhRunner,
+    boardId: string,
+    repo?: NonNullable<Scope['repo']>
+  ): Promise<string> {
+    const cacheKey = repo && /^\d+$/.test(boardId)
+      ? `${repo.owner}/${repo.repo}/${boardId}`
+      : boardId;
+    const cached = boardIdCache.get(cacheKey);
     if (cached) return cached;
 
     if (!boardId.includes('/')) {
-      boardIdCache.set(boardId, Promise.resolve(boardId));
-      return boardIdCache.get(boardId)!;
+      if (!repo || !/^\d+$/.test(boardId)) {
+        boardIdCache.set(cacheKey, Promise.resolve(boardId));
+        return boardIdCache.get(cacheKey)!;
+      }
+      boardId = `${repo.owner}/${repo.repo}/${boardId}`;
     }
 
     const parts = boardId.split('/').filter(Boolean);
@@ -68,7 +78,7 @@ export function createCaches() {
         `invalid board id "${boardId}": expected "owner/repo/number" or a project node id`
       );
     }
-    const [owner, repo, numberStr] = parts;
+    const [owner, repoName, numberStr] = parts;
     const number = Number(numberStr);
     if (Number.isNaN(number)) {
       throw new Error(
@@ -91,11 +101,11 @@ export function createCaches() {
 
     const promise = gh.graphql(
       query,
-      { owner: owner!, repo: repo!, number },
+      { owner: owner!, repo: repoName!, number },
       schema
     );
     boardIdCache.set(
-      boardId,
+      cacheKey,
       promise.then((data) => {
         if (!data.repository.projectV2) {
           throw new Error(`project "${boardId}" not found`);
@@ -103,7 +113,7 @@ export function createCaches() {
         return data.repository.projectV2.id;
       })
     );
-    return boardIdCache.get(boardId)!;
+    return boardIdCache.get(cacheKey)!;
   }
 
   function getIssueNodeId(
@@ -462,7 +472,10 @@ async function fetchProjectItemsPage(
               fieldValues(first: 20) {
                 nodes {
                   __typename
-                  ... on ProjectV2ItemFieldSingleSelectValue { name field { name } }
+                  ... on ProjectV2ItemFieldSingleSelectValue {
+                    name
+                    field { ... on ProjectV2SingleSelectField { name } }
+                  }
                 }
               }
               content {
@@ -492,7 +505,7 @@ export function createGitHubProjectsBoardProvider(
   const { getIssueNodeId, getBoardFields, resolveBoardId } = createCaches();
 
   async function requireResolvedBoard(scope: Scope): Promise<string> {
-    return resolveBoardId(gh, requireBoard(scope));
+    return resolveBoardId(gh, requireBoard(scope), requireRepo(scope));
   }
 
   async function listBoardItems(scope: Scope): Promise<ProjectItem[]> {

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-mcp-tracker is an MCP server that gives a coding agent native access to issue trackers and code hosts: branches, PRs, issues, comments, boards, labels, and milestones. It exists so the agent works the tracker the way a developer does, with session context (repo, active issue, defaults) resolved once and reused, instead of repeating parameters on every call.
+mcp-tracker gives coding agents a compact, native interface to code hosts and issue trackers. Project defaults and metadata load once; issue-targeting operations require explicit identifiers.
 
 ## Aspiration
 
@@ -19,12 +19,12 @@ A single developer running an agent locally against their own GitHub repos. They
 3. **Capabilities are declarative:** a provider declares what it implements (code, issue, board, metadata, sub-issues, relationships). No duck-typing with `in`, no stateless delegator classes.
 4. **One domain vocabulary:** providers normalize into shared types. States are `open | closed | merged`, never vendor casing. Vendor-specific mechanisms (labels vs. board fields vs. frontmatter) stay inside the provider.
 5. **Never interpolate into shell or GraphQL:** subprocess calls use argument arrays; GraphQL uses variables. No string concatenation of untrusted or variable values.
-6. **The external tool contract is stable:** tool names, parameters, and the session-context behavior documented in the README survive the rewrite unchanged.
+6. **The external tool contract stays compact:** related mutations are consolidated and metadata is represented in schemas instead of discovery tools.
 
 ## Anti-goals
 
 - Not a generic GitHub/GitLab API client; only the tracker workflow the agent needs.
-- Not multi-repo or multi-board concurrent sessions (one context per process).
+- Not multi-repo or multi-board concurrent processes.
 - Not an HTTP/SSE server; stdio transport only.
 - No GitLab providers in the rewrite (return later, once the architecture is validated).
 - No broad test coverage now; contract tests for the provider interfaces only.

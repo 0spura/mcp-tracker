@@ -44,16 +44,10 @@ const versionedShape = {
   boardId: z.string().optional(),
   defaults: defaultsSchema.optional(),
   workflow: workflowSchema.optional(),
-  typeLabels: z.record(z.string()).optional(),
-};
-
-const localShape = {
-  ...versionedShape,
-  activeIssue: z.string().optional(),
 };
 
 const versionedRawSchema = z.object(versionedShape).strict();
-const localRawSchema = z.object(localShape).strict();
+const localRawSchema = z.object(versionedShape).strict();
 
 export interface TrackerDefaults {
   baseBranch?: string;
@@ -87,10 +81,8 @@ export interface TrackerConfig {
   localTaskDir?: string;
   repo?: string;
   boardId?: string;
-  activeIssue?: string;
   defaults?: TrackerDefaults;
   workflow?: TrackerWorkflow;
-  typeLabels?: Record<string, string>;
 }
 
 const CONFIG_FILE = '.mcp-tracker.json';
@@ -158,10 +150,6 @@ function mergeConfigs(base: TrackerConfig, override: TrackerConfig): TrackerConf
   if (base.boardId !== undefined || override.boardId !== undefined) {
     merged.boardId = override.boardId ?? base.boardId;
   }
-  if (override.activeIssue !== undefined) {
-    merged.activeIssue = override.activeIssue;
-  }
-
   const mergedDefaults = mergeDefaults(base.defaults, override.defaults);
   if (mergedDefaults !== undefined) {
     merged.defaults = mergedDefaults;
@@ -170,10 +158,6 @@ function mergeConfigs(base: TrackerConfig, override: TrackerConfig): TrackerConf
   const mergedWorkflow = mergeWorkflow(base.workflow, override.workflow);
   if (mergedWorkflow !== undefined) {
     merged.workflow = mergedWorkflow;
-  }
-
-  if (base.typeLabels !== undefined || override.typeLabels !== undefined) {
-    merged.typeLabels = { ...base.typeLabels, ...override.typeLabels };
   }
 
   return merged;

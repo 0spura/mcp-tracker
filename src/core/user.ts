@@ -1,7 +1,7 @@
 /**
  * Sentinel username meaning "the currently authenticated account". Providers
- * resolve it when a username is accepted (config defaults, session context,
- * tool args) by calling out to the host's "who am I" endpoint.
+ * resolve it when a username is accepted (config defaults or tool args) by
+ * calling out to the host's "who am I" endpoint.
  */
 export const CURRENT_USER = '$current';
 

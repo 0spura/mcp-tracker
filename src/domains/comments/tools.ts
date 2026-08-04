@@ -10,7 +10,6 @@ import {
   ISSUE_NUMBER_PARAM,
   ATTACHMENTS_PARAM,
   appendAttachments,
-  resolveIssueId,
   resolveScope,
 } from '../../tools/helpers.js';
 
@@ -23,7 +22,7 @@ export function registerCommentTools(
 ): void {
   server.tool(
     'add_issue_comment',
-    'Add a comment to an issue, with optional file attachments appended as markdown links. Defaults to the active issue.',
+    'Comment on an issue.',
     {
       body: z.string(),
       attachments: ATTACHMENTS_PARAM,
@@ -33,14 +32,14 @@ export function registerCommentTools(
     async (args) => {
       const scope = await resolveScope(ctx, requires, args.repo);
       const { body, warnings } = await appendAttachments(issue, scope, args.body, args.attachments);
-      await issue.addIssueComment(scope, await resolveIssueId(ctx, args.number), body);
+      await issue.addIssueComment(scope, String(args.number), body);
       return warnings.length > 0 ? json({ warnings }) : text('comment added');
     }
   );
 
   server.tool(
     'add_pr_comment',
-    'Add a comment to a pull request, with optional file attachments appended as markdown links.',
+    'Comment on a pull request.',
     {
       number: z.number().int().positive(),
       body: z.string(),
@@ -57,20 +56,19 @@ export function registerCommentTools(
 
   server.tool(
     'list_comments',
-    'List comments on an issue or pull request. Issue type defaults to the active issue.',
+    'List issue or pull request comments.',
     {
       type: z.enum(['issue', 'pr']),
-      number: ISSUE_NUMBER_PARAM.describe('Required for pr; defaults to active issue for issue.'),
+      number: ISSUE_NUMBER_PARAM,
       repo: REPO_PARAM,
     },
     async (args) => {
       if (args.type === 'pr') {
-        if (args.number === undefined) throw new Error('number is required for pr comments');
         const scope = await resolveScope(ctx, ['repo'], args.repo);
         return json(await code.listPRComments(scope.repo!, args.number));
       }
       const scope = await resolveScope(ctx, requires, args.repo);
-      return json(await issue.listIssueComments(scope, await resolveIssueId(ctx, args.number)));
+      return json(await issue.listIssueComments(scope, String(args.number)));
     }
   );
 }

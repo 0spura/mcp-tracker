@@ -1,6 +1,7 @@
 import type { Scope } from '../../core/scope.js';
 import type {
   Issue,
+  IssueType,
   ItemId,
   RelationshipType,
   CreateIssueOptions,
@@ -9,7 +10,15 @@ import type {
   Label,
   Milestone,
   PR,
+  ProjectField,
 } from '../../core/types.js';
+
+export interface IssueCatalog {
+  issueTypes: IssueType[];
+  labels: string[];
+  milestones: string[];
+  boardFields: ProjectField[];
+}
 
 export interface ListIssuesOptions {
   state?: 'open' | 'closed' | 'all';
@@ -20,6 +29,7 @@ export interface ListIssuesOptions {
 
 export interface IssueProvider {
   listIssues(scope: Scope, opts?: ListIssuesOptions): Promise<Issue[]>;
+  listIssueTypes?(scope: Scope): Promise<IssueType[]>;
 
   createIssue(
     scope: Scope,

@@ -1,31 +1,24 @@
 import { z } from 'zod';
 import type { ContextStore } from '../context/store.js';
 import type { Scope } from '../core/scope.js';
-import type { ItemId } from '../core/types.js';
 import type { IssueProvider } from '../domains/issues/capabilities.js';
 import { UnsupportedError } from '../core/errors.js';
 
 export const REPO_PARAM = z
   .string()
   .optional()
-  .describe('owner/repo. Omit to auto-resolve from git/context.');
+  .describe('owner/repo; defaults to project scope.');
 
 export const ISSUE_NUMBER_PARAM = z
   .number()
   .int()
   .positive()
-  .optional()
-  .describe('Defaults to active issue.');
+  .describe('Issue number.');
 
 export const ATTACHMENTS_PARAM = z
   .array(z.string())
   .optional()
   .describe('Local file paths to upload; their markdown links are appended to the body.');
-
-export const BOARD_ID_PARAM = z
-  .string()
-  .optional()
-  .describe('Board ID. Uses context if set.');
 
 type Result = { content: Array<{ type: 'text'; text: string }> };
 
@@ -76,20 +69,6 @@ export async function appendAttachments(
   const suffix = links.join('\n');
   const newBody = trimmed.length === 0 ? suffix : `${trimmed}\n\n${suffix}`;
   return { body: newBody, warnings };
-}
-
-/** Resolve the issue id for tools that default to the active issue. */
-export async function resolveIssueId(
-  ctx: ContextStore,
-  explicit?: number
-): Promise<ItemId> {
-  const resolved = await ctx.resolveActiveIssue(
-    explicit !== undefined ? String(explicit) : undefined
-  );
-  if (resolved.value === 'unset') {
-    throw new Error('no active issue; pass an issue number or set active_issue in context');
-  }
-  return resolved.value;
 }
 
 /** Resolve scope from context, requiring the provider's declared keys. */

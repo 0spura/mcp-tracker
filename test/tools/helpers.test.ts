@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { appendAttachments } from '../../src/tools/helpers.js';
+import { appendAttachments, ISSUE_NUMBER_PARAM } from '../../src/tools/helpers.js';
 import { UnsupportedError } from '../../src/core/errors.js';
 import type { IssueProvider } from '../../src/domains/issues/capabilities.js';
 
@@ -72,5 +72,13 @@ describe('appendAttachments', () => {
     const result = await appendAttachments(provider, { repo }, '', ['a.png']);
 
     expect(result.body).toBe('[a.png](/uploads/a.png)');
+  });
+});
+
+describe('ISSUE_NUMBER_PARAM', () => {
+  it('requires a positive issue number', () => {
+    expect(ISSUE_NUMBER_PARAM.safeParse(undefined).success).toBe(false);
+    expect(ISSUE_NUMBER_PARAM.safeParse(0).success).toBe(false);
+    expect(ISSUE_NUMBER_PARAM.safeParse(42).success).toBe(true);
   });
 });

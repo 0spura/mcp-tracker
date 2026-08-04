@@ -27,6 +27,14 @@ export interface Issue {
   labels: string[];
   assignees: string[];
   milestone?: string | null;
+  type?: string | null;
+}
+
+export interface IssueType {
+  id: number;
+  name: string;
+  description: string | null;
+  color: string | null;
 }
 
 export interface PR {
@@ -80,6 +88,7 @@ export interface ProjectField {
 }
 
 export interface CreateIssueOptions {
+  type?: string;
   labels?: string[];
   assignees?: string[];
   milestone?: string;
@@ -90,9 +99,11 @@ export interface CreateIssueOptions {
   parent?: ItemId;
   status?: string;
   fields?: Record<string, string>;
+  issueFields?: Record<string, unknown>;
 }
 
 export interface UpdateIssueOptions {
+  type?: string | null;
   title?: string;
   body?: string;
   labels?: string[];
@@ -106,6 +117,7 @@ export interface UpdateIssueOptions {
   add_related?: ItemId[];
   remove_related?: ItemId[];
   duplicate_of?: ItemId | null;
+  issueFields?: Record<string, unknown>;
 }
 
 export interface CreatePROptions {

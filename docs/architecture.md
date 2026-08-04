@@ -20,7 +20,7 @@ src/
     errors.ts            TrackerError hierarchy: CliError, TimeoutError, ParseError,
                          ConfigError, UnsupportedError
   context/
-    store.ts             ContextStore: session values + precedence resolution (async);
+    store.ts             project configuration and scope resolution;
                          resolves Scope and validates bundle.requires
     config.ts            nested .mcp-tracker.json / .local schema, zod-validated,
                          ConfigError on invalid JSON
@@ -44,7 +44,6 @@ src/
       local.ts           implementation over local/files.ts
     boards/
       capabilities.ts    BoardProvider interface
-      tools.ts           board tools
       github-projects.ts implementation (paginates all items, caches field/option IDs)
       gitlab.ts          implementation over glab api (lists/labels as status)
     comments/
@@ -87,7 +86,7 @@ interface ProviderBundle {
 
 `server.ts` merges the code bundle (from `CODE_PROVIDER`) and the task bundle (from `TASK_PROVIDER`) and passes it to `registerTools`. Presence of a bundle member is static typing, not duck-typing; no classes, no `in` checks. A tool domain is registered only when its bundle member exists; a tool errors clearly only when a required scope is unresolvable.
 
-Sub-capabilities (checklist, sub-issues, relationships, labels, milestones, time tracking, attachments, related-issue/MR reads) remain optional methods on `IssueProvider`; registration of those tools checks for the method. The last three (`logTime`, `attachFile`, `listRelatedIssues`/`listLinkedPRs`) are implemented only by the GitLab provider — GitHub has no native time tracking, no stable public REST endpoint for issue attachments, and no REST equivalent for related-item reads (would need GraphQL timeline-event parsing). `listRelatedIssues`/`listLinkedPRs` share a single tool, `list_linked_items`, filtered by a `type` argument, rather than two near-identical tools. `attachFile` takes only a file path (uploads are project-scoped in GitLab, not issue-scoped), which is why `create_issue`, `update_issue`, `add_issue_comment`, `add_pr_comment`, and `create_pr` can all reuse it directly through a shared `appendAttachments` helper (`src/tools/helpers.ts`) instead of forcing a separate `upload_attachment` call before every create. The same rule applies to `BoardProvider.addIssueToBoard`: only boards with explicit membership (GitHub Projects) implement it; GitLab boards show open issues implicitly and omit the method, so `add_issue_to_board` is not registered for them.
+Optional provider methods supply checklist, hierarchy, relationships, metadata, time tracking, attachments, linked items, and board integration. Related writes are consolidated into `create_issue` and `update_issue`; attachments are arguments on create/update/comment tools. Issue types, labels, milestones, and board fields are loaded once into startup schemas rather than exposed as discovery tools.
 
 ## Configuration
 
@@ -116,10 +115,9 @@ Nested schema, field-level deep merge of `.mcp-tracker.local.json` over `.mcp-tr
 }
 ```
 
-- A stage is `{key, name}` or `{key, name, id}`. Name-based stages are resolved to native option IDs once per session and cached by the board provider; explicit `id` skips resolution. Magic strings in code are forbidden — automations read `workflow.on`.
+- A stage is `{key, name}` or `{key, name, id}`. Name-based stages are resolved once per server process and cached by the board provider; explicit `id` skips resolution. Automations read `workflow.on`.
 - `codeProvider`, `taskProvider`, and `localTaskDir` may be set in the config file and take precedence over the env vars, so one user-level install behaves per project ([RF-PRV.1](./srs.md#rf-prv1-provider-selection)).
-- `activeIssue` is valid only in `.mcp-tracker.local.json` (state, not config).
-- The flat legacy config (`defaultBase`, `statusLabels`) was never documented and has no alias; the tool parameter surface (`tracker_set_context`) is unchanged. GitLab status moves use `workflow.stages` (`id` or `name`) as mutually-exclusive labels.
+- Mutable session context and legacy `typeLabels` are not part of the configuration contract.
 
 ## Integration patterns
 
@@ -147,24 +145,22 @@ Every raw response is validated by a caller-supplied zod schema; a mismatch rais
 ## Business rules
 
 ```
-Rule: Context precedence | Source: RF-CTX.2
-Given a value needed by a tool | When resolving | Then explicit argument wins over
-session, session over config file, config over git derivation; each resolved value
-knows its source for tracker_get_context.
+Rule: Configuration precedence | Source: RF-CTX.2
+Given a value needed by a tool | When resolving | Then explicit arguments win over
+project configuration, which wins over git derivation.
 
 Rule: Branch naming | Source: RF-BRN.1
-Given create_branch with a resolvable issue | When the branch is created | Then the
-name is <number>-<slug-of-title> and the branch is linked to the issue; without an
-issue the caller's name is used verbatim. Existing linked branch → return it, no error.
+Given create_branch with an issue number | When the branch is created | Then the name
+is <number>-<slug-of-title> and the branch is linked to the issue. Existing linked
+branch → return it, no error.
 
 Rule: PR body closes issue | Source: RF-PRS.1
-Given an active issue | When create_pr builds the body | Then 'Closes #N' is appended
-unless the body already references the issue.
+Given explicit issue numbers | When create_pr builds the body | Then 'Closes #N' is
+appended for each issue unless the body already references it.
 
-Rule: Status mechanism is provider-internal | Source: RF-ISS.2
-Given move_issue_status | When the provider applies it | Then github-projects writes the
-board Status field (of the context board, never items[0]), local writes frontmatter; the
-tool contract carries only the status string.
+Rule: Status automation is provider-internal | Source: RF-ISS.2
+Given a configured workflow event | When it runs | Then the provider moves the explicit
+issue identifiers supplied to the triggering tool.
 
 Rule: Automation failures are visible | Source: RF-BRN.1, RF-PRS.1
 Given workflow.on maps an event to a stage | When a best-effort status automation
@@ -179,7 +175,7 @@ moves to the stage key configured for that event (e.g. new issues land in
 hardcoded.
 
 Rule: Partial failure keeps what succeeded | Source: RF-ISS.1
-Given create_issue with board context | When the board add fails after the issue was
+Given create_issue with a configured board | When the board add fails after the issue was
 created | Then the response returns the created issue plus a warnings entry; the call
 does not fail, because the issue already exists remotely.
 
@@ -211,7 +207,6 @@ UnsupportedError naming what is unsupported; silent degradation is a bug.
 | CLI hangs | killed at timeout | `TimeoutError` with cmd and deadline | retry; deadline is configurable |
 | Malformed CLI/GraphQL output | zod mismatch | `ParseError` naming endpoint | bug report; no silent cast |
 | Invalid `.mcp-tracker.json` | zod/JSON error at load | `ConfigError` with file path and issue | fix file |
-| No resolvable issue for implicit-number tool | resolution chain exhausted | clear error "no active issue; pass number" | set context or pass number |
 | Status automation fails | caught, collected | `warnings` field in response | manual status move |
 | Unsupported capability called | — | tool not registered at all | choose a provider with the capability |
 

@@ -90,28 +90,21 @@ describe('loadConfig', () => {
     });
   });
 
-  it('merges typeLabels key by key with the local file winning', async () => {
+  it('rejects legacy typeLabels', async () => {
     writeFileSync(
       join(cwd, '.mcp-tracker.json'),
       JSON.stringify({ typeLabels: { feat: 'feature', fix: 'bug' } })
     );
-    writeFileSync(
-      join(cwd, '.mcp-tracker.local.json'),
-      JSON.stringify({ typeLabels: { fix: 'defect' } })
-    );
-
-    const config = await loadConfig(cwd);
-    expect(config.typeLabels).toEqual({ feat: 'feature', fix: 'defect' });
+    await expect(loadConfig(cwd)).rejects.toBeInstanceOf(ConfigError);
   });
 
-  it('allows activeIssue in the local config file', async () => {
+  it('rejects activeIssue in the local config file', async () => {
     writeFileSync(
       join(cwd, '.mcp-tracker.local.json'),
       JSON.stringify({ activeIssue: 'PROJ-42' })
     );
 
-    const config = await loadConfig(cwd);
-    expect(config.activeIssue).toBe('PROJ-42');
+    await expect(loadConfig(cwd)).rejects.toBeInstanceOf(ConfigError);
   });
 
   it('throws ConfigError for invalid JSON', async () => {

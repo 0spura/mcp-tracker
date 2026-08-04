@@ -1,7 +1,7 @@
 /**
  * Sentinel milestone title meaning "the current milestone": the active
  * milestone with the nearest upcoming due date. Providers resolve it when a
- * milestone title is accepted (config defaults, session context, tool args).
+ * milestone title is accepted (config defaults or tool args).
  */
 export const CURRENT_MILESTONE = '$current';
 
@@ -24,4 +24,3 @@ export function pickCurrentMilestone<T>(
   );
   return upcoming[0];
 }
-

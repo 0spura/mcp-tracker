@@ -1,5 +1,5 @@
 import type { run } from '../core/process.js';
-import type { TrackerRepo, ItemId } from '../core/types.js';
+import type { TrackerRepo } from '../core/types.js';
 
 export type GitDerivationResult<T> = T | 'unset';
 
@@ -48,32 +48,4 @@ function parseRemoteUrl(url: string): GitDerivationResult<TrackerRepo> {
   const repo = parts[parts.length - 1];
   const owner = parts.slice(0, -1).join('/');
   return { owner, repo };
-}
-
-/**
- * Derive the active item id from `git branch --show-current`.
- *
- * Matches numeric ids (`feat/42-slug`, `42-slug`) and tracker-style key ids
- * (`feat/PROJ-123-slug`). Failures resolve to "unset" and never throw.
- */
-export async function deriveActiveIssue(
-  gitRun: ProcessRunner
-): Promise<GitDerivationResult<ItemId>> {
-  let branch: string;
-  try {
-    branch = (await gitRun('git', ['branch', '--show-current'])).trim();
-  } catch {
-    return 'unset';
-  }
-
-  if (!branch) {
-    return 'unset';
-  }
-
-  const match = branch.match(/(?:^|\/)([A-Z]+-\d+|\d+)(?:-|$)/);
-  if (!match) {
-    return 'unset';
-  }
-
-  return match[1];
 }

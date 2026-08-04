@@ -4,6 +4,7 @@ import type { Scope } from '../../core/scope.js';
 import type { IssueProvider, ListIssuesOptions } from './capabilities.js';
 import type {
   Issue,
+  IssueType,
   ItemId,
   RelationshipType,
   CreateIssueOptions,
@@ -67,6 +68,7 @@ const issueSchema = z.object({
   assignees: z.array(assigneeSchema),
   milestone: milestoneSchema.nullable().optional(),
   pull_request: z.object({ url: z.string() }).optional().nullable(),
+  type: z.union([z.string(), z.object({ name: z.string() })]).nullable().optional(),
 });
 
 function mapIssue(raw: z.infer<typeof issueSchema>): Issue {
@@ -79,8 +81,24 @@ function mapIssue(raw: z.infer<typeof issueSchema>): Issue {
     labels: raw.labels.map((l) => l.name),
     assignees: raw.assignees.map((a) => a.login),
     milestone: raw.milestone?.title ?? null,
+    ...(raw.type
+      ? { type: typeof raw.type === 'string' ? raw.type : raw.type.name }
+      : {}),
   };
 }
+
+const issueFieldDefinitionSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  data_type: z.string(),
+});
+
+const issueTypeSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  description: z.string().nullable(),
+  color: z.string().nullable(),
+});
 
 const commentSchema = z.object({
   id: z.number(),
@@ -266,6 +284,51 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
   const { getIssueNodeId, primeIssueNodeId, getBoardFields, resolveBoardId } = createCaches();
   const resolveLabelNames = createLabelResolver(gh);
   const getCurrentLogin = createCurrentUserResolver(gh);
+  const issueFieldCache = new Map<string, Promise<z.infer<typeof issueFieldDefinitionSchema>[]>>();
+  const issueTypeCache = new Map<string, Promise<IssueType[]>>();
+  const issueLabelListCache = new Map<string, Promise<Label[]>>();
+
+  async function listIssueTypes(scope: Scope): Promise<IssueType[]> {
+    const repo = requireRepo(scope);
+    const key = `${repo.owner}/${repo.repo}`;
+    let types = issueTypeCache.get(key);
+    if (!types) {
+      types = gh.api(
+        `/repos/${repoPath(repo)}/issue-types`,
+        z.array(issueTypeSchema)
+      );
+      issueTypeCache.set(key, types);
+    }
+    return types;
+  }
+
+  async function setIssueFields(
+    repo: NonNullable<Scope['repo']>,
+    issueId: ItemId,
+    values: Record<string, unknown>
+  ): Promise<void> {
+    const definitions = issueFieldCache.get(repo.owner) ?? gh.api(
+      `/orgs/${encodeURIComponent(repo.owner)}/issue-fields`,
+      z.array(issueFieldDefinitionSchema)
+    );
+    issueFieldCache.set(repo.owner, definitions);
+    const fields = await definitions;
+    const byName = new Map(fields.map((field) => [field.name.toLowerCase(), field]));
+    const issueFieldValues = Object.entries(values).map(([name, value]) => {
+      const field = byName.get(name.toLowerCase());
+      if (!field) {
+        const available = fields.map((candidate) => candidate.name).join(', ');
+        throw new UnsupportedError(`issue field "${name}" not found; available: ${available}`);
+      }
+      return { field_id: field.id, value };
+    });
+
+    await gh.api(
+      `/repos/${repoPath(repo)}/issues/${toIssueNumber(issueId)}/issue-field-values`,
+      z.any(),
+      { method: 'POST', input: { issue_field_values: issueFieldValues } }
+    );
+  }
 
   async function createIssue(
     scope: Scope,
@@ -286,6 +349,7 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
         ? await resolveUsernames(opts.assignees, getCurrentLogin)
         : [],
     };
+    if (opts?.type !== undefined) input.type = opts.type;
 
     if (opts?.milestone) {
       input.milestone = await resolveMilestoneNumber(gh, repo, opts.milestone);
@@ -301,11 +365,21 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
       primeIssueNodeId(issue.id, raw.node_id);
     }
 
+    if (opts?.issueFields && Object.keys(opts.issueFields).length > 0) {
+      try {
+        await setIssueFields(repo, issue.id, opts.issueFields);
+      } catch (err) {
+        warnings.push(
+          `set issue fields failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
     let boardItemId: string | undefined;
     let resolvedBoardId: string | undefined;
     if (scope.boardId) {
       try {
-        resolvedBoardId = await resolveBoardId(gh, scope.boardId);
+        resolvedBoardId = await resolveBoardId(gh, scope.boardId, repo);
         const contentId = raw.node_id ?? (await getIssueNodeId(gh, repo, issue.id));
         boardItemId = await addIssueToBoard(gh, resolvedBoardId, contentId);
       } catch (err) {
@@ -452,6 +526,7 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
           : await resolveMilestoneNumber(gh, repo, opts.milestone);
     }
     if (opts.state !== undefined) input.state = opts.state;
+    if (opts.type !== undefined) input.type = opts.type;
 
     const raw = await gh.api(
       `/repos/${repoPath(repo)}/issues/${toIssueNumber(id)}`,
@@ -462,6 +537,16 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
       primeIssueNodeId(id, raw.node_id);
     }
     const issue = mapIssue(raw);
+
+    if (opts.issueFields && Object.keys(opts.issueFields).length > 0) {
+      try {
+        await setIssueFields(repo, id, opts.issueFields);
+      } catch (err) {
+        warnings.push(
+          `set issue fields failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
 
     const addOps: Array<{ type: RelationshipType; targets: ItemId[] }> = [
       { type: 'blocks', targets: opts.add_blocks ?? [] },
@@ -540,17 +625,21 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
     const blockedId = type === 'blocks' ? targetNodeId : sourceNodeId;
 
     const mutation = `
-      mutation($blockerId: ID!, $blockedId: ID!) {
-        removeBlockedBy(input: { blockerId: $blockerId, blockedId: $blockedId }) {
-          id
+      mutation($blockingIssueId: ID!, $issueId: ID!) {
+        removeBlockedBy(input: { blockingIssueId: $blockingIssueId, issueId: $issueId }) {
+          blockingIssue { id }
+          issue { id }
         }
       }`;
 
     const schema = z.object({
-      removeBlockedBy: z.object({ id: z.string() }),
+      removeBlockedBy: z.object({
+        blockingIssue: z.object({ id: z.string() }),
+        issue: z.object({ id: z.string() }),
+      }),
     });
 
-    await gh.graphql(mutation, { blockerId, blockedId }, schema);
+    await gh.graphql(mutation, { blockingIssueId: blockerId, issueId: blockedId }, schema);
   }
 
   async function setIssueStatus(
@@ -563,7 +652,7 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
       throw new Error('board context is required to set issue status');
     }
 
-    const boardId = await resolveBoardId(gh, scope.boardId);
+    const boardId = await resolveBoardId(gh, scope.boardId, requireRepo(scope));
     const [fields, itemId] = await Promise.all([
       getBoardFields(gh, boardId),
       findProjectItemId(gh, repo, boardId, id),
@@ -623,17 +712,21 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
       const blockedId = type === 'blocks' ? targetNodeId : sourceNodeId;
 
       const mutation = `
-        mutation($blockerId: ID!, $blockedId: ID!) {
-          addBlockedBy(input: { blockerId: $blockerId, blockedId: $blockedId }) {
-            id
+        mutation($blockingIssueId: ID!, $issueId: ID!) {
+          addBlockedBy(input: { blockingIssueId: $blockingIssueId, issueId: $issueId }) {
+            blockingIssue { id }
+            issue { id }
           }
         }`;
 
       const schema = z.object({
-        addBlockedBy: z.object({ id: z.string() }),
+        addBlockedBy: z.object({
+          blockingIssue: z.object({ id: z.string() }),
+          issue: z.object({ id: z.string() }),
+        }),
       });
 
-      await gh.graphql(mutation, { blockerId, blockedId }, schema);
+      await gh.graphql(mutation, { blockingIssueId: blockerId, issueId: blockedId }, schema);
       return { mechanism: 'native' };
     }
 
@@ -673,11 +766,16 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
 
   async function listLabels(scope: Scope): Promise<Label[]> {
     const repo = requireRepo(scope);
-    const raw = await gh.api(
-      `/repos/${repoPath(repo)}/labels`,
-      z.array(repoLabelSchema)
-    );
-    return raw.map(mapRepoLabel);
+    const key = repoPath(repo);
+    let labels = issueLabelListCache.get(key);
+    if (!labels) {
+      labels = gh.api(
+        `/repos/${key}/labels`,
+        z.array(repoLabelSchema)
+      ).then((raw) => raw.map(mapRepoLabel));
+      issueLabelListCache.set(key, labels);
+    }
+    return labels;
   }
 
   async function listMilestones(
@@ -694,6 +792,7 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
 
   return {
     listIssues,
+    listIssueTypes,
     createIssue,
     getIssue,
     updateIssue,

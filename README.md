@@ -8,7 +8,7 @@ MCP server for coding agents to interact with code hosts and issue trackers. Ins
 - All GitHub/GitLab communication goes through the `gh`/`glab` CLIs, which own authentication. This project never reads or stores tokens.
 - Install once at user level: point your MCP client at `dist/index.js`.
 - Behavior is defined per project via `.mcp-tracker.json` (versioned) and `.mcp-tracker.local.json` (gitignored).
-- Value precedence: explicit tool argument > session (`tracker_set_context`) > project config > git derivation.
+- Value precedence: explicit tool argument > project config > git derivation.
 
 ## Setup
 
@@ -97,18 +97,9 @@ Values applied automatically when a tool does not receive the argument explicitl
 - `milestone`: use `"$current"` to dynamically resolve to the active milestone with the nearest upcoming due date
 - `labels`: labels applied on issue/PR creation
 
-### Type labels
+### Issue metadata
 
-```json
-{
-  "typeLabels": {
-    "feat": "feature",
-    "fix": "bug"
-  }
-}
-```
-
-When configured, `create_issue` accepts a `type` argument. The mapped label is added alongside `defaults.labels`. Unknown types return an error listing the valid keys.
+Native issue types, labels, open milestones, and board fields are loaded once during startup and exposed directly in tool schemas. `issue_fields` targets native GitHub Issue Fields; `fields` targets Projects V2 fields.
 
 ### Workflow
 
@@ -137,10 +128,10 @@ Defines status columns and the automations that move issues between them:
 - `stages`: ordered list of columns. Each stage is `{ key, name }` or `{ key, name, id }` (fixed native id, no resolution).
 - `on`: maps events to stage keys:
   - `createIssue`: new issues land in this stage
-  - `createBranch`: creating a branch moves the active issue to this stage
-  - `createPr`: creating a PR moves the active issue to this stage
-  - `reviewApproved`: approving a PR moves the active issue to this stage
-  - `mergePr`: a successful merge moves the active issue to this stage
+  - `createBranch`: creating a branch moves its issue to this stage
+  - `createPr`: creating a PR moves its issues to this stage
+  - `reviewApproved`: approving a PR moves its issues to this stage
+  - `mergePr`: a successful merge moves its issues to this stage
 
 ### Id or name
 
@@ -160,7 +151,6 @@ Names are preferred in versioned configs because they stay readable across renam
 
 ```json
 {
-  "activeIssue": "42",
   "defaults": {
     "assignee": "me",
     "labels": ["my-team"]
@@ -168,24 +158,7 @@ Names are preferred in versioned configs because they stay readable across renam
 }
 ```
 
-- `activeIssue` only makes sense in the local file (it is session state, not config).
 - `defaults` fields override the versioned file, except `labels`, which is concatenated.
-
-## Session context
-
-Use `tracker_set_context` to set values that last for the whole session:
-
-- `repo`: `owner/repo` (auto-detected from git when omitted)
-- `board_id`: board number
-- `active_issue`: issue being worked on; issue tools use it when no number is passed. Pass `null` to clear.
-- `default_base`: base branch for new PRs
-- `default_reviewers`: default list of reviewers
-- `default_merge_method`: `merge` | `squash` | `rebase`
-- `default_merge_delete_branch`: delete the source branch on `merge_pr`
-- `default_assignee`: default assignee. `"$current"` resolves to the authenticated account.
-- `default_milestone`: default milestone
-
-Use `tracker_get_context` to see current values and their sources.
 
 ## Complete example
 
@@ -202,10 +175,6 @@ Use `tracker_get_context` to see current values and their sources.
     "assignee": "ana",
     "milestone": "$current",
     "labels": ["agent"]
-  },
-  "typeLabels": {
-    "feat": "feature",
-    "fix": "bug"
   },
   "workflow": {
     "stages": [
@@ -229,7 +198,7 @@ Use `tracker_get_context` to see current values and their sources.
 A few tools are only registered when the issue provider is `gitlab` — they simply don't appear for other providers, per the "unsupported is explicit" rule (see `docs/architecture.md`):
 
 - `log_time`: logs spent/estimated time on an issue via GitLab's native time-tracking endpoints. No GitHub equivalent exists.
-- `upload_attachment`: uploads a local file to the project and returns its markdown link, optionally posting it as a comment right away. GitHub has no stable public REST endpoint for arbitrary issue attachments (the web UI's upload path is undocumented), so this isn't available for GitHub. `create_issue`, `update_issue`, `add_issue_comment`, `add_pr_comment`, and `create_pr` also accept an `attachments` (file paths) argument that uploads and appends the markdown links in the same call, instead of a separate `upload_attachment` round trip.
+- Attachments are accepted directly by `create_issue`, `update_issue`, `add_issue_comment`, `add_pr_comment`, and `create_pr`.
 - `list_linked_items`: reads issues and/or merge requests linked to an issue, filtered by `type` (`issues` | `prs` | `all`) — one tool, not two, so the two link kinds don't need separate calls. GitHub would need GraphQL timeline-event parsing to do this reliably; left out of this pass rather than shipped half-working.
 
 ## Development
