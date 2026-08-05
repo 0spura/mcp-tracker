@@ -63,6 +63,7 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-CTX.2
 * `create_branch` creates a branch off the repo's default branch.
 * `issue_number` is required; the provider reads the title internally and creates `<number>-<slug>` without exposing a branch-name argument.
+* After the remote branch is created or reused, `create_branch` checks out the resulting branch in the local workspace with `git checkout <name>`.
 * Creating an already-existing linked branch returns the existing branch instead of failing (idempotent).
 * When `statusLabels.doing` is configured, the issue status moves to that label; automation failures surface as a warning field in the response, never silently.
 

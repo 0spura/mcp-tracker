@@ -6,6 +6,7 @@ import type { ItemId, PR } from "../../core/types.js";
 import type { IssueCatalog, IssueProvider } from "../issues/capabilities.js";
 import type { CodeProvider } from "./capabilities.js";
 import { UnsupportedError } from "../../core/errors.js";
+import { run as runProcess } from "../../core/process.js";
 import {
   json,
   text,
@@ -55,6 +56,7 @@ export function registerCodeTools(
   ctx: ContextStore,
   issue?: IssueProvider,
   catalog?: IssueCatalog,
+  runGit: (cmd: string, args: string[]) => Promise<string> = runProcess,
 ): void {
   const repoOf = async (explicit?: string) => {
     const scope = await resolveScope(ctx, ["repo"], explicit);
@@ -84,6 +86,7 @@ export function registerCodeTools(
       const repo = await repoOf(args.repo);
       const issueId = String(args.issue_number);
       const result = await code.createBranch(repo, issueId, "", args.base);
+      await runGit("git", ["checkout", result.name]);
       const warnings: string[] = [];
       const scope = await resolveScope(ctx, []);
       await applyStageTrigger(
