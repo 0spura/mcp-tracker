@@ -115,7 +115,7 @@ function truncateDiff(text: string): string {
 
 function referencesIssue(body: string, issueNumber: number): boolean {
   const pattern = new RegExp(
-    `(?:closes|fixes|resolves)?\\s*#${issueNumber}\\b`,
+    `\\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\\s*:?[ \\t]*#${issueNumber}\\b`,
     'i'
   );
   return pattern.test(body);

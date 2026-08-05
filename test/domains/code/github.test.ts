@@ -247,6 +247,42 @@ describe('createGitHubCodeProvider', () => {
       const input = JSON.parse(fake.calls[0].input ?? '{}');
       expect(input.body).toBe('This fixes #42\n\nCloses #7\n');
     });
+
+    it('does not treat an ordinary issue reference as a closing keyword', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(prFixture()) },
+      ]);
+
+      await provider.createPR(
+        repo,
+        'title',
+        'Traceability: Issue #42',
+        'feature',
+        'main',
+        { issues: ['42'] }
+      );
+
+      const input = JSON.parse(fake.calls[0].input ?? '{}');
+      expect(input.body).toBe('Traceability: Issue #42\n\nCloses #42\n');
+    });
+
+    it('recognizes GitHub closing keywords with an optional colon', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(prFixture()) },
+      ]);
+
+      await provider.createPR(
+        repo,
+        'title',
+        'Closes: #42',
+        'feature',
+        'main',
+        { issues: ['42'] }
+      );
+
+      const input = JSON.parse(fake.calls[0].input ?? '{}');
+      expect(input.body).toBe('Closes: #42');
+    });
   });
 
   describe('getPR / listPRs', () => {
