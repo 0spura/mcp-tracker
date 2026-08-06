@@ -172,7 +172,6 @@ function mapLinkedMr(raw: z.infer<typeof linkedMrSchema>): PR {
     title: raw.title,
     body: raw.description ?? '',
     state: raw.state === 'opened' || raw.state === 'locked' ? 'open' : raw.state,
-    url: raw.web_url,
     headBranch: raw.source_branch,
     baseBranch: raw.target_branch,
   };

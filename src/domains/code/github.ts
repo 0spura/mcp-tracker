@@ -54,7 +54,6 @@ function mapPR(raw: z.infer<typeof prSchema>): PR {
     title: raw.title,
     body: raw.body ?? '',
     state: normalizePRState(raw.state, raw.merged),
-    url: raw.html_url,
     headBranch: raw.head.ref,
     baseBranch: raw.base.ref,
   };
@@ -612,7 +611,6 @@ async function getPRChecks(
         name: run.name,
         status: run.status,
         conclusion: run.conclusion,
-        url: run.html_url ?? '',
         logs,
       };
     })

@@ -54,7 +54,6 @@ function mapPR(raw: z.infer<typeof mrSchema>): PR {
     title: raw.title,
     body: raw.description ?? '',
     state: normalizePRState(raw.state),
-    url: raw.web_url,
     headBranch: raw.source_branch,
     baseBranch: raw.target_branch,
   };
@@ -555,7 +554,6 @@ async function getPRChecks(
         name: job.name,
         status: mapJobStatus(job.status),
         conclusion: mapJobConclusion(job.status),
-        url: job.web_url,
         logs,
       };
     }),

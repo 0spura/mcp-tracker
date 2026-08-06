@@ -42,7 +42,6 @@ export interface PR {
   title: string;
   body: string;
   state: PRState;
-  url: string;
   headBranch: string;
   baseBranch: string;
 }
@@ -51,7 +50,6 @@ export interface CheckRun {
   name: string;
   status: string;
   conclusion: string | null;
-  url: string;
   logs?: string | null;
 }
 
