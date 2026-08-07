@@ -243,5 +243,5 @@ async function ensureLocalGitignoreEntry(cwd: string): Promise<void> {
   }
 
   const separator = content.endsWith('\n') ? '' : '\n';
-  await writeFile(gitignorePath, `${content}${separator}${LOCAL_GITIGNORE_ENTRY}\n`);
+  //await writeFile(gitignorePath, `${content}${separator}${LOCAL_GITIGNORE_ENTRY}\n`);
 }
