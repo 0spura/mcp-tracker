@@ -674,7 +674,7 @@ export function createGitLabIssueProvider(
   async function listLabels(scope: Scope): Promise<Label[]> {
     const repo = requireRepo(scope);
     const raw = await glab.api(
-      `projects/${projectRef(repo)}/labels`,
+      `projects/${projectRef(repo)}/labels?per_page=100`,
       z.array(labelSchema)
     );
     return raw.map(mapLabel);

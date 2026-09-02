@@ -19,7 +19,7 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 * Config is read from `.mcp-tracker.json` (versioned) with field-level overrides from `.mcp-tracker.local.json` (gitignored). The schema is nested: top-level `repo`, `boardId`; `defaults` (`baseBranch`, `mergeMethod`, `deleteBranchOnMerge`, `reviewers`, `assignee`, `milestone`, `labels`); `workflow` with ordered `stages` and `on` automation triggers.
 * `create_issue` accepts the provider's native issue type through `type`.
 * GitHub issue creation and update accept `issue_fields`, a name/value map for organization-level Issue Fields. The existing `fields` parameter remains scoped to Project V2 fields.
-* Native issue types, labels, open milestones, and board fields are loaded once at startup and exposed in tool schemas.
+* Native issue types and board fields are loaded once at startup and exposed in tool schemas. Labels and milestones remain strings: labels come from project defaults or explicit arguments, and milestone names are resolved only when used.
 * `defaults` fields merge with the local file winning per field, except `labels`, which concatenates versioned + local with dedupe: project labels stay in the versioned file, personal labels (team, own scope) in the gitignored local one, and issues get both.
 * A stage value given as a name is resolved to the provider's native option ID once per server process and cached; an explicit `id` skips resolution.
 * An invalid JSON config file produces a clear error in the tool response, not silent ignore.
@@ -62,8 +62,8 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 ### RF-BRN.1: Create branch
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-CTX.2
 * `create_branch` creates a branch off the repo's default branch.
-* `issue_number` is required; the provider reads the title internally and creates `<number>-<slug>` without exposing a branch-name argument.
-* After the remote branch is created or reused, `create_branch` checks out the resulting branch in the local workspace with `git checkout <name>`.
+* `issue_number` and `branch_name` are required. `branch_name` must be lowercase ASCII, at most 96 characters, include the issue number, and follow `<type>/<number>-<2-8-word-purpose>` (for example, `feat/96-distribute-and-promote-model-candidates`). Agents must not copy the full issue title.
+* After the remote branch is created or reused, `create_branch` checks out the resulting branch in the local workspace. If it is not local yet, the tool fetches remotes and tracks `origin/<name>`.
 * Creating an already-existing linked branch returns the existing branch instead of failing (idempotent).
 * When `statusLabels.doing` is configured, the issue status moves to that label; automation failures surface as a warning field in the response, never silently.
 
@@ -120,14 +120,14 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 
 ### RF-BRD.1: Board integration
 **Priority:** Should Have | **Status:** Accepted | **Dependencies:** RF-CTX.1, RF-PRV.2
-* Board fields are loaded at startup and exposed in issue tool schemas.
+* Board fields are loaded at startup and exposed in issue tool schemas. Labels are not enumerated at startup because large label catalogs waste context and can be truncated by provider pagination.
 * `create_issue` and `update_issue` own board membership and field updates; no standalone board tools are exposed.
 
 ## RF-MTD: Metadata
 
 ### RF-MTD.1: Labels and milestones
 **Priority:** Could Have | **Status:** Accepted | **Dependencies:** RF-PRV.2
-* Labels and open milestones are startup metadata, not standalone tools.
+* Labels and open milestones are not standalone tools. Labels remain textual inputs and open milestones are resolved on demand, avoiding an unbounded startup catalog.
 * A provider without a real milestone concept returns an explicit "not supported" error instead of fabricated entries.
 
 ### RF-MTD.2: Time tracking, attachments, and related-item reads (GitLab only)

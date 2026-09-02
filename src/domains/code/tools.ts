@@ -21,6 +21,23 @@ export function summarizePR(pr: PR): Omit<PR, "body"> {
   return summary;
 }
 
+async function checkoutBranch(
+  runGit: (cmd: string, args: string[]) => Promise<string>,
+  name: string,
+): Promise<void> {
+  try {
+    await runGit("git", ["checkout", name]);
+    return;
+  } catch (checkoutError) {
+    try {
+      await runGit("git", ["fetch", "--all", "--prune"]);
+      await runGit("git", ["checkout", "--track", `origin/${name}`]);
+    } catch {
+      throw checkoutError;
+    }
+  }
+}
+
 /** Best-effort status automation driven by config workflow.on triggers. */
 async function applyStageTrigger(
   ctx: ContextStore,
@@ -41,7 +58,7 @@ async function applyStageTrigger(
   }
   for (const issueId of issueIds) {
     try {
-      await issue.setIssueStatus(scope, issueId, stage.id ?? stage.name);
+      await issue.setIssueStatus(scope, issueId, stage.name);
     } catch (err) {
       warnings.push(
         `could not move issue #${issueId} to "${stage.name}": ${(err as Error).message}`,
@@ -73,9 +90,25 @@ export function registerCodeTools(
 
   server.tool(
     "create_branch",
-    "Create or reuse an issue-linked branch.",
+      "Create or reuse an issue-linked branch. branch_name is required and must be " +
+      "descriptive: use <type>/<issue>-<purpose>, such as " +
+      "feat/96-distribute-and-promote-model-candidates or " +
+      "fix/41-remote-branch-checkout. Use 2-8 meaningful kebab-case terms; " +
+      "never copy the full issue title.",
     {
       issue_number: z.number().int().positive().describe("Issue number."),
+      branch_name: z
+        .string()
+        .trim()
+        .min(8)
+        .max(96)
+        .regex(
+          /^[a-z][a-z0-9-]*\/[0-9]+-[a-z0-9]+(?:-[a-z0-9]+){1,7}$/,
+          "Use <type>/<issue>-<2-8-word-kebab-case-purpose>.",
+        )
+        .describe(
+          "Required descriptive name, e.g. feat/96-distribute-and-promote-model-candidates; max 96 characters.",
+        ),
       base: z
         .string()
         .optional()
@@ -85,8 +118,19 @@ export function registerCodeTools(
     async (args) => {
       const repo = await repoOf(args.repo);
       const issueId = String(args.issue_number);
-      const result = await code.createBranch(repo, issueId, "", args.base);
-      await runGit("git", ["checkout", result.name]);
+      const issuePrefix = new RegExp(`^[a-z][a-z0-9-]*/${issueId}-`);
+      if (!issuePrefix.test(args.branch_name)) {
+        throw new Error(
+          `branch_name must include issue ${issueId} as <type>/${issueId}-<purpose>`,
+        );
+      }
+      const result = await code.createBranch(
+        repo,
+        issueId,
+        args.branch_name,
+        args.base,
+      );
+      await checkoutBranch(runGit, result.name);
       const warnings: string[] = [];
       const scope = await resolveScope(ctx, []);
       await applyStageTrigger(

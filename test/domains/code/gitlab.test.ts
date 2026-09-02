@@ -45,6 +45,31 @@ function restFields(call: { input?: string }) {
 
 describe('createGitLabCodeProvider', () => {
   describe('createBranch', () => {
+    it('uses a concise explicit branch name when provided', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(projectFixture()) },
+        { stdout: JSON.stringify(branchFixture('defabc')) },
+        { error: new CliError(1, 'Not Found', 'glab') },
+        { stdout: JSON.stringify({}) },
+      ]);
+
+      const result = await provider.createBranch(
+        repo,
+        '42',
+        'feat/42-promote-model',
+        undefined,
+      );
+
+      expect(result).toEqual({ name: 'feat/42-promote-model' });
+      expect(fake.calls[2].args.join(' ')).toContain(
+        'repository/branches/feat%2F42-promote-model',
+      );
+      expect(restFields(fake.calls[3])).toEqual({
+        branch: 'feat/42-promote-model',
+        ref: 'defabc',
+      });
+    });
+
     it('creates a linked branch from the project template', async () => {
       const { provider, fake } = makeProvider([
         { stdout: JSON.stringify(projectFixture({ issue_branch_template: '%{id}-%{title}' })) },
@@ -55,7 +80,7 @@ describe('createGitLabCodeProvider', () => {
         { stdout: JSON.stringify({}) },
       ]);
 
-      const result = await provider.createBranch(repo, '42', 'ignored', undefined);
+      const result = await provider.createBranch(repo, '42', '', undefined);
 
       expect(result).toEqual({ name: '42-fix-the-bug' });
       expect(fake.calls[4].args.join(' ')).toContain(
@@ -79,7 +104,7 @@ describe('createGitLabCodeProvider', () => {
         { stdout: JSON.stringify({}) },
       ]);
 
-      const result = await provider.createBranch(repo, '42', 'ignored', undefined);
+      const result = await provider.createBranch(repo, '42', '', undefined);
 
       expect(result).toEqual({ name: '42-fix-the-bug' });
       expect(fake.calls[4].args.join(' ')).toContain(
@@ -96,7 +121,7 @@ describe('createGitLabCodeProvider', () => {
         { stdout: JSON.stringify({ name: '42-fix-the-bug' }) },
       ]);
 
-      const result = await provider.createBranch(repo, '42', 'other', undefined);
+      const result = await provider.createBranch(repo, '42', '', undefined);
 
       expect(result).toEqual({ name: '42-fix-the-bug' });
       expect(fake.calls).toHaveLength(5);

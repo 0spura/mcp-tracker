@@ -126,7 +126,7 @@ export function registerIssueTools(
         const stage = config.workflow.stages?.find(
           (s) => s.key === config.workflow!.on!.createIssue
         );
-        status = stage ? (stage.id ?? stage.name) : undefined;
+        status = stage?.name;
       }
       const result = await issue.createIssue(scope, args.title, body, {
         labels: labels.length > 0 ? labels : undefined,
@@ -280,10 +280,10 @@ export function registerIssueTools(
     const toggle = issue.toggleChecklistItem.bind(issue);
     server.tool(
       'toggle_checklist_item',
-      'Set an issue checklist item.',
+      'Mark or unmark one issue checklist item by partial text; pass checked explicitly when possible.',
       {
-        item_text: z.string().describe('Partial text of the checklist item.'),
-        checked: z.boolean().optional().describe('Explicit state; toggles when omitted.'),
+        item_text: z.string().min(1).describe('Unique partial text of the markdown checklist item.'),
+        checked: z.boolean().optional().describe('true marks complete; false marks incomplete; omit to toggle.'),
         number: ISSUE_NUMBER_PARAM,
         repo: REPO_PARAM,
       },

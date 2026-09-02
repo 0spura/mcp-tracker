@@ -1,0 +1,4 @@
+[mcp_servers.mcp-tracker]
+command = "node"
+args = ["/home/luislima/Projects/personal/mcp-tracker/dist/index.js"]
+default_tools_approval_mode = "writes"

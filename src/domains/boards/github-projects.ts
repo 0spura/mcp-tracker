@@ -73,12 +73,14 @@ export function createCaches() {
     }
 
     const parts = boardId.split('/').filter(Boolean);
-    if (parts.length !== 3) {
+    if (parts.length !== 2 && parts.length !== 3) {
       throw new Error(
-        `invalid board id "${boardId}": expected "owner/repo/number" or a project node id`
+        `invalid board id "${boardId}": expected "owner/number", "owner/repo/number", or a project node id`
       );
     }
-    const [owner, repoName, numberStr] = parts;
+    const [owner, repoName, numberStr] = parts.length === 2
+      ? [parts[0], undefined, parts[1]]
+      : parts;
     const number = Number(numberStr);
     if (Number.isNaN(number)) {
       throw new Error(
@@ -86,31 +88,57 @@ export function createCaches() {
       );
     }
 
-    const query = `
-      query($owner: String!, $repo: String!, $number: Int!) {
-        repository(owner: $owner, name: $repo) {
-          projectV2(number: $number) { id }
-        }
-      }`;
+    const promise = repoName
+      ? gh
+          .graphql(
+            `
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  projectV2(number: $number) { id }
+                }
+              }`,
+            { owner: owner!, repo: repoName, number },
+            z.object({
+              repository: z.object({
+                projectV2: z.object({ id: z.string() }).nullable(),
+              }),
+            })
+          )
+          .then((data) => data.repository.projectV2?.id)
+      : (async () => {
+          const user = await gh.graphql(
+            `
+              query($owner: String!, $number: Int!) {
+                user(login: $owner) { projectV2(number: $number) { id } }
+              }`,
+            { owner: owner!, number },
+            z.object({
+              user: z.object({ projectV2: z.object({ id: z.string() }).nullable() }).nullable(),
+            })
+          );
+          if (user.user?.projectV2) return user.user.projectV2.id;
 
-    const schema = z.object({
-      repository: z.object({
-        projectV2: z.object({ id: z.string() }).nullable(),
-      }),
-    });
-
-    const promise = gh.graphql(
-      query,
-      { owner: owner!, repo: repoName!, number },
-      schema
-    );
+          const organization = await gh.graphql(
+            `
+              query($owner: String!, $number: Int!) {
+                organization(login: $owner) { projectV2(number: $number) { id } }
+              }`,
+            { owner: owner!, number },
+            z.object({
+              organization: z
+                .object({ projectV2: z.object({ id: z.string() }).nullable() })
+                .nullable(),
+            })
+          );
+          return organization.organization?.projectV2?.id;
+        })();
     boardIdCache.set(
       cacheKey,
-      promise.then((data) => {
-        if (!data.repository.projectV2) {
+      promise.then((projectId) => {
+        if (!projectId) {
           throw new Error(`project "${boardId}" not found`);
         }
-        return data.repository.projectV2.id;
+        return projectId;
       })
     );
     return boardIdCache.get(cacheKey)!;

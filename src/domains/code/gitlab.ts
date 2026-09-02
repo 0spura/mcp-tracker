@@ -16,6 +16,7 @@ import { resolveUsernames } from '../../core/user.js';
 import { UnsupportedError } from '../../core/errors.js';
 
 const MAX_DIFF_CHARS = 50_000;
+const MAX_BRANCH_SLUG_LENGTH = 40;
 const LOG_TAIL_LINES = 200;
 const LOG_TAIL_CHARS = 12_000;
 
@@ -106,7 +107,7 @@ function slugify(title: string): string {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
-    .slice(0, 80)
+    .slice(0, MAX_BRANCH_SLUG_LENGTH)
     .replace(/-$/, '');
   return slug || 'issue';
 }
@@ -211,9 +212,10 @@ async function createBranch(
   branchName: string,
   base?: string,
 ): Promise<{ name: string }> {
+  const issueNumber = issueId != null ? toIid(issueId) : null;
   const resolvedName =
-    issueId != null
-      ? await resolveIssueBranchName(glab, repo, toIid(issueId))
+    issueNumber != null
+      ? branchName.trim() || await resolveIssueBranchName(glab, repo, issueNumber)
       : branchName;
 
   const ref = projectRef(repo);

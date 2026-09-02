@@ -21,6 +21,16 @@ describe('loadConfig', () => {
     expect(config).toEqual({});
   });
 
+  it('adds the local override to gitignore', async () => {
+    writeFileSync(join(cwd, '.gitignore'), 'dist/\n');
+
+    await loadConfig(cwd);
+
+    expect(await import('node:fs/promises').then(({ readFile }) =>
+      readFile(join(cwd, '.gitignore'), 'utf8')
+    )).toBe('dist/\n.mcp-tracker.local.json\n');
+  });
+
   it('loads the nested versioned config file', async () => {
     writeFileSync(
       join(cwd, '.mcp-tracker.json'),

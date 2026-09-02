@@ -103,27 +103,15 @@ export async function createServer(): Promise<McpServer> {
           repo: resolvedRepo.value,
           ...(resolvedBoard.value === 'unset' ? {} : { boardId: resolvedBoard.value }),
         };
-    const [issueTypes, labels, milestones, boardFields] = await Promise.all([
+    const [issueTypes, boardFields] = await Promise.all([
       scope && bundle.issue.listIssueTypes
         ? bundle.issue.listIssueTypes(scope).catch(() => [])
-        : [],
-      scope && bundle.issue.listLabels
-        ? bundle.issue.listLabels(scope).then(
-            (items) => items.map((item) => item.name),
-            () => []
-          )
-        : [],
-      scope && bundle.issue.listMilestones
-        ? bundle.issue.listMilestones(scope, 'open').then(
-            (items) => items.map((item) => item.title),
-            () => []
-          )
         : [],
       scope?.boardId && bundle.board
         ? bundle.board.listBoardFields(scope).catch(() => [])
         : [],
     ]);
-    catalog = { issueTypes, labels, milestones, boardFields };
+    catalog = { issueTypes, labels: [], milestones: [], boardFields };
   }
 
   if (bundle.code) registerCodeTools(server, bundle.code, ctx, bundle.issue, catalog);

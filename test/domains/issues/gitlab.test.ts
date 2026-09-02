@@ -548,7 +548,7 @@ describe('createGitLabIssueProvider', () => {
       const labels = await provider.listLabels({ repo });
 
       expect(labels).toEqual([{ name: 'bug', color: 'ff0000', description: 'Bug' }]);
-      expect(fake.calls[0].args.join(' ')).toContain('projects/acme%2Fwidget/labels');
+      expect(fake.calls[0].args.join(' ')).toContain('projects/acme%2Fwidget/labels?per_page=100');
     });
 
     it('lists milestones normalized', async () => {
@@ -721,7 +721,6 @@ describe('createGitLabIssueProvider', () => {
           title: 'Fix bug',
           body: '',
           state: 'open',
-          url: 'https://gitlab.com/acme/widget/-/merge_requests/9',
           headBranch: 'fix-9',
           baseBranch: 'main',
         },

@@ -418,6 +418,18 @@ describe('createGitHubProjectsBoardProvider', () => {
       expect(vars.projectId).toBe('PVT_opaque');
     });
 
+    it('resolves owner/number to a user or organization project node id', async () => {
+      const { provider, fake } = makeProvider([
+        graphqlOk({ user: { projectV2: { id: 'PVT_user' } } }),
+        itemPage([], false, null),
+      ]);
+
+      await provider.listBoardItems({ repo, boardId: 'octocat/9' });
+
+      expect(graphqlVariables(fake.calls[0])).toEqual({ owner: 'octocat', number: '9' });
+      expect(graphqlVariables(fake.calls[1]).projectId).toBe('PVT_user');
+    });
+
     it('errors when the project is not found', async () => {
       const { provider } = makeProvider([
         graphqlOk({ repository: { projectV2: null } }),

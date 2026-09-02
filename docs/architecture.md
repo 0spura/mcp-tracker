@@ -86,7 +86,7 @@ interface ProviderBundle {
 
 `server.ts` merges the code bundle (from `CODE_PROVIDER`) and the task bundle (from `TASK_PROVIDER`) and passes it to `registerTools`. Presence of a bundle member is static typing, not duck-typing; no classes, no `in` checks. A tool domain is registered only when its bundle member exists; a tool errors clearly only when a required scope is unresolvable.
 
-Optional provider methods supply checklist, hierarchy, relationships, metadata, time tracking, attachments, linked items, and board integration. Related writes are consolidated into `create_issue` and `update_issue`; attachments are arguments on create/update/comment tools. Issue types, labels, milestones, and board fields are loaded once into startup schemas rather than exposed as discovery tools.
+Optional provider methods supply checklist, hierarchy, relationships, metadata, time tracking, attachments, linked items, and board integration. Related writes are consolidated into `create_issue` and `update_issue`; attachments are arguments on create/update/comment tools. Issue types and board fields are loaded once into startup schemas; labels and milestones stay textual and resolve only when used, rather than expanding the startup context with large catalogs.
 
 ## Configuration
 

@@ -99,9 +99,9 @@ Values applied automatically when a tool does not receive the argument explicitl
 
 ### Issue metadata
 
-Native issue types, labels, open milestones, and board fields are loaded once during startup and exposed directly in tool schemas. `issue_fields` targets native GitHub Issue Fields; `fields` targets Projects V2 fields.
+Native issue types and board fields are loaded once during startup and exposed directly in tool schemas. Labels remain strings (project defaults are read from config), and milestone names are resolved only when used. `issue_fields` targets native GitHub Issue Fields; `fields` targets Projects V2 fields.
 
-`list_issues` and `list_prs` return summaries without bodies. Use the corresponding `get_*` tool only for the selected item. `create_branch` derives its name from the required issue number and title inside the provider, then checks out that branch locally.
+`list_issues` and `list_prs` return summaries without bodies. Use the corresponding `get_*` tool only for the selected item. `create_branch` requires a descriptive `branch_name` in the form `<type>/<issue>-<2-8-word-purpose>`, such as `feat/96-distribute-and-promote-model-candidates`; use lowercase ASCII, include the issue number, and do not copy the full title. The tool checks out the branch locally and fetches remotes when necessary.
 
 ### Workflow
 
@@ -139,7 +139,7 @@ Defines status columns and the automations that move issues between them:
 
 Most identifiers accept a human-readable name and fall back to the native id when needed:
 
-- `boardId` (GitHub Projects): opaque project node id or `owner/repo/project-number`.
+- `boardId` (GitHub Projects): opaque project node id, `owner/project-number` for a user/org project, or `owner/repo/project-number` for a repository project.
 - `workflow.stages`: each stage is `{ key, name }` or `{ key, name, id }`.
 - Labels (GitHub): name or numeric label id.
 - Milestones: title, `"$current"`, or the native number/id.

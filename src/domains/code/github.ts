@@ -23,6 +23,7 @@ import {
 const MAX_DIFF_CHARS = 50_000;
 const LOG_TAIL_LINES = 200;
 const LOG_TAIL_CHARS = 12_000;
+const MAX_BRANCH_SLUG_LENGTH = 40;
 
 function repoPath(repo: TrackerRepo): string {
   return `${repo.owner}/${repo.repo}`;
@@ -101,7 +102,7 @@ function slugify(title: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
-    .slice(0, 50)
+    .slice(0, MAX_BRANCH_SLUG_LENGTH)
     .replace(/-$/, '');
   return slug || 'issue';
 }
