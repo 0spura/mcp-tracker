@@ -42,6 +42,7 @@ const versionedShape = {
   localTaskDir: z.string().optional(),
   repo: z.string().optional(),
   boardId: z.string().optional(),
+  labels: z.array(z.string()).optional(),
   defaults: defaultsSchema.optional(),
   workflow: workflowSchema.optional(),
 };
@@ -81,6 +82,8 @@ export interface TrackerConfig {
   localTaskDir?: string;
   repo?: string;
   boardId?: string;
+  /** Project label vocabulary used to constrain tool arguments. */
+  labels?: string[];
   defaults?: TrackerDefaults;
   workflow?: TrackerWorkflow;
 }
@@ -149,6 +152,9 @@ function mergeConfigs(base: TrackerConfig, override: TrackerConfig): TrackerConf
   }
   if (base.boardId !== undefined || override.boardId !== undefined) {
     merged.boardId = override.boardId ?? base.boardId;
+  }
+  if (base.labels !== undefined || override.labels !== undefined) {
+    merged.labels = [...new Set([...(base.labels ?? []), ...(override.labels ?? [])])];
   }
   const mergedDefaults = mergeDefaults(base.defaults, override.defaults);
   if (mergedDefaults !== undefined) {

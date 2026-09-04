@@ -73,6 +73,16 @@ Use `taskProvider: "local"` for file-based tracking with markdown files and no e
 - `repo`: `owner/repo`. Optional when derived from the git remote.
 - `boardId`: GitHub Projects V2 number. Only needed for boards.
 
+### Project labels
+
+```json
+{
+  "labels": ["🚧 feature", "🚧 fix", "🚧 refactoring", "🖥️ ia"]
+}
+```
+
+`labels` is the project's allowed label vocabulary. It is read from the project config and exposed to tool schemas; it is never fetched as a startup catalog. Put labels that should be applied automatically under `defaults.labels` instead. The local config can add vocabulary and personal defaults.
+
 ### Defaults
 
 Values applied automatically when a tool does not receive the argument explicitly:

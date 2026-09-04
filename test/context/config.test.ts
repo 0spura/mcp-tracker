@@ -37,6 +37,7 @@ describe('loadConfig', () => {
       JSON.stringify({
         repo: 'acme/widgets',
         boardId: 'PVT_1',
+        labels: ['bug', 'feature'],
         defaults: {
           baseBranch: 'main',
           mergeMethod: 'squash',
@@ -63,6 +64,7 @@ describe('loadConfig', () => {
     expect(config).toEqual({
       repo: 'acme/widgets',
       boardId: 'PVT_1',
+      labels: ['bug', 'feature'],
       defaults: {
         baseBranch: 'main',
         mergeMethod: 'squash',
@@ -165,6 +167,7 @@ describe('loadConfig', () => {
       JSON.stringify({
         repo: 'acme/widgets',
         boardId: 'PVT_base',
+        labels: ['bug'],
         defaults: {
           baseBranch: 'main',
           reviewers: ['alice'],
@@ -186,6 +189,7 @@ describe('loadConfig', () => {
       join(cwd, '.mcp-tracker.local.json'),
       JSON.stringify({
         boardId: 'PVT_local',
+        labels: ['feature'],
         defaults: {
           mergeMethod: 'rebase',
           labels: ['agent'],
@@ -206,6 +210,7 @@ describe('loadConfig', () => {
     expect(config).toEqual({
       repo: 'acme/widgets',
       boardId: 'PVT_local',
+      labels: ['bug', 'feature'],
       defaults: {
         baseBranch: 'main',
         reviewers: ['alice'],

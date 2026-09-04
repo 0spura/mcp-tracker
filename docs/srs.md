@@ -16,10 +16,10 @@ Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who c
 ### RF-CTX.2: Resolution precedence
 **Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
 * Values resolve in this order: explicit tool argument > config file > git derivation.
-* Config is read from `.mcp-tracker.json` (versioned) with field-level overrides from `.mcp-tracker.local.json` (gitignored). The schema is nested: top-level `repo`, `boardId`; `defaults` (`baseBranch`, `mergeMethod`, `deleteBranchOnMerge`, `reviewers`, `assignee`, `milestone`, `labels`); `workflow` with ordered `stages` and `on` automation triggers.
+* Config is read from `.mcp-tracker.json` (versioned) with field-level overrides from `.mcp-tracker.local.json` (gitignored). The schema is nested: top-level `repo`, `boardId`, `labels` (bounded label vocabulary); `defaults` (`baseBranch`, `mergeMethod`, `deleteBranchOnMerge`, `reviewers`, `assignee`, `milestone`, `labels`); `workflow` with ordered `stages` and `on` automation triggers.
 * `create_issue` accepts the provider's native issue type through `type`.
 * GitHub issue creation and update accept `issue_fields`, a name/value map for organization-level Issue Fields. The existing `fields` parameter remains scoped to Project V2 fields.
-* Native issue types and board fields are loaded once at startup and exposed in tool schemas. Labels and milestones remain strings: labels come from project defaults or explicit arguments, and milestone names are resolved only when used.
+* Native issue types and board fields are loaded once at startup and exposed in tool schemas. Labels are constrained by the project-configured `labels` vocabulary and are never fetched as a startup catalog. Milestone names are resolved only when used.
 * `defaults` fields merge with the local file winning per field, except `labels`, which concatenates versioned + local with dedupe: project labels stay in the versioned file, personal labels (team, own scope) in the gitignored local one, and issues get both.
 * A stage value given as a name is resolved to the provider's native option ID once per server process and cached; an explicit `id` skips resolution.
 * An invalid JSON config file produces a clear error in the tool response, not silent ignore.

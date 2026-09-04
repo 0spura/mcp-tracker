@@ -111,7 +111,17 @@ export async function createServer(): Promise<McpServer> {
         ? bundle.board.listBoardFields(scope).catch(() => [])
         : [],
     ]);
-    catalog = { issueTypes, labels: [], milestones: [], boardFields };
+    catalog = {
+      issueTypes,
+      labels: [
+        ...new Set([
+          ...(config.labels ?? []),
+          ...(config.defaults?.labels ?? []),
+        ]),
+      ],
+      milestones: [],
+      boardFields,
+    };
   }
 
   if (bundle.code) registerCodeTools(server, bundle.code, ctx, bundle.issue, catalog);
