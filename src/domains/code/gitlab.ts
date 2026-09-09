@@ -280,6 +280,7 @@ async function createPR(
       description: finalBody,
       source_branch: head,
       target_branch: baseBranch,
+      draft: opts?.draft,
     },
   });
 

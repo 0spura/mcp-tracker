@@ -1,4 +1,3 @@
-import { toggleChecklistItem as toggleInBody } from '../../core/checklist.js';
 import { UnsupportedError } from '../../core/errors.js';
 import type { Scope } from '../../core/scope.js';
 import type {
@@ -140,21 +139,6 @@ export function createLocalIssueProvider(dir: string): IssueProvider {
 
     async listIssueComments(_scope: Scope, id: ItemId): Promise<Comment[]> {
       return (await store.get(id)).comments;
-    },
-
-    async toggleChecklistItem(
-      _scope: Scope,
-      id: ItemId,
-      itemText: string,
-      checked?: boolean
-    ): Promise<{ matched: string; checked: boolean }> {
-      let outcome!: { matched: string; checked: boolean };
-      await store.update(id, (stored) => {
-        const result = toggleInBody(stored.body, itemText, checked);
-        stored.body = result.body;
-        outcome = { matched: result.matched, checked: result.checked };
-      });
-      return outcome;
     },
 
     async setRelationship(

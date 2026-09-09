@@ -109,9 +109,19 @@ Values applied automatically when a tool does not receive the argument explicitl
 
 ### Issue metadata
 
-Native issue types and board fields are loaded once during startup and exposed directly in tool schemas. Labels remain strings (project defaults are read from config), and milestone names are resolved only when used. `issue_fields` targets native GitHub Issue Fields; `fields` targets Projects V2 fields.
+Native issue types and board fields are loaded once during startup and exposed directly in tool schemas. Labels use the configured vocabulary from `labels`; milestone names are resolved only when used. `issue_fields` targets native GitHub Issue Fields; `fields` targets writable Projects V2 fields: text, number, date, single-select, multi-select, and iteration.
 
-`list_issues` and `list_prs` return summaries without bodies. Use the corresponding `get_*` tool only for the selected item. `create_branch` requires a descriptive `branch_name` in the form `<type>/<issue>-<2-8-word-purpose>`, such as `feat/96-distribute-and-promote-model-candidates`; use lowercase ASCII, include the issue number, and do not copy the full title. The tool checks out the branch locally and fetches remotes when necessary.
+`list_issues` and `list_prs` return summaries without bodies. Use the corresponding `get_*` tool only for the selected item. `list_issues` accepts `parent` for direct sub-issues and `linked_to` for linked issues; `list_prs` accepts `linked_to` for pull requests linked to an issue. Contextual filters cannot be mixed with global state, label, or assignee filters. `create_branch` requires a descriptive `branch_name` in the form `<type>/<issue>-<2-8-word-purpose>`, such as `feat/96-distribute-and-promote-model-candidates`; use lowercase ASCII, include the issue number, and do not copy the full title. The tool checks out the branch locally and fetches remotes when necessary.
+
+### Work-item shape
+
+One issue is the normal unit of work: its body holds the goal, acceptance, and
+verification; linked documents remain canonical in the repository. Use issue
+comments or updates when phase evidence or status changes need to be recorded.
+Create a parent or child issue only when a
+piece has independent acceptance, ownership, deployment, dependency, or review
+scope. An outcome/epic is therefore a grouping mechanism for multiple delivery
+items, not a mandatory wrapper around every change.
 
 ### Workflow
 
@@ -205,13 +215,13 @@ Names are preferred in versioned configs because they stay readable across renam
 }
 ```
 
-## GitLab-only capabilities
+## Provider-specific capabilities
 
-A few tools are only registered when the issue provider is `gitlab` — they simply don't appear for other providers, per the "unsupported is explicit" rule (see `docs/architecture.md`):
-
-- `log_time`: logs spent/estimated time on an issue via GitLab's native time-tracking endpoints. No GitHub equivalent exists.
-- Attachments are accepted directly by `create_issue`, `update_issue`, `add_issue_comment`, `add_pr_comment`, and `create_pr`.
-- `list_linked_items`: reads issues and/or merge requests linked to an issue, filtered by `type` (`issues` | `prs` | `all`) — one tool, not two, so the two link kinds don't need separate calls. GitHub would need GraphQL timeline-event parsing to do this reliably; left out of this pass rather than shipped half-working.
+Attachments are accepted directly by `create_issue`, `update_issue`,
+`add_issue_comment`, `add_pr_comment`, and `create_pr` when the configured
+provider supports them. `linked_to` is currently available with GitLab's native
+issue and merge-request relationship endpoints; other providers reject that
+filter explicitly rather than approximating it.
 
 ## Development
 

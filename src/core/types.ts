@@ -85,6 +85,8 @@ export interface ProjectField {
   options?: Array<{ id: string; name: string }>;
 }
 
+export type ProjectFieldValue = string | number | string[];
+
 export interface CreateIssueOptions {
   type?: string;
   labels?: string[];
@@ -96,7 +98,7 @@ export interface CreateIssueOptions {
   duplicate_of?: ItemId;
   parent?: ItemId;
   status?: string;
-  fields?: Record<string, string>;
+  fields?: Record<string, ProjectFieldValue>;
   issueFields?: Record<string, unknown>;
 }
 
@@ -120,6 +122,7 @@ export interface UpdateIssueOptions {
 
 export interface CreatePROptions {
   issues?: ItemId[];
+  draft?: boolean;
 }
 
 export interface UpdatePROptions {

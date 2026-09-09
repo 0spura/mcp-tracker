@@ -4,6 +4,7 @@ import type { ContextStore } from "../../context/store.js";
 import type { Scope } from "../../core/scope.js";
 import type { ItemId, PR } from "../../core/types.js";
 import type { IssueCatalog, IssueProvider } from "../issues/capabilities.js";
+import { resolveWorkflowStage } from "../issues/work-log.js";
 import type { CodeProvider } from "./capabilities.js";
 import { UnsupportedError } from "../../core/errors.js";
 import { run as runProcess } from "../../core/process.js";
@@ -51,17 +52,19 @@ async function applyStageTrigger(
   const config = await ctx.getConfig();
   const stageKey = config.workflow?.on?.[event];
   if (!stageKey) return;
-  const stage = config.workflow?.stages?.find((s) => s.key === stageKey);
-  if (!stage) {
+  let status: string;
+  try {
+    status = resolveWorkflowStage(config, stageKey);
+  } catch {
     warnings.push(`workflow.on.${event} points to unknown stage "${stageKey}"`);
     return;
   }
   for (const issueId of issueIds) {
     try {
-      await issue.setIssueStatus(scope, issueId, stage.name);
+      await issue.setIssueStatus(scope, issueId, status);
     } catch (err) {
       warnings.push(
-        `could not move issue #${issueId} to "${stage.name}": ${(err as Error).message}`,
+        `could not move issue #${issueId} to "${status}": ${(err as Error).message}`,
       );
     }
   }
@@ -90,11 +93,7 @@ export function registerCodeTools(
 
   server.tool(
     "create_branch",
-      "Create or reuse an issue-linked branch. branch_name is required and must be " +
-      "descriptive: use <type>/<issue>-<purpose>, such as " +
-      "feat/96-distribute-and-promote-model-candidates or " +
-      "fix/41-remote-branch-checkout. Use 2-8 meaningful kebab-case terms; " +
-      "never copy the full issue title.",
+    "Create or reuse and check out an issue-linked branch.",
     {
       issue_number: z.number().int().positive().describe("Issue number."),
       branch_name: z
@@ -156,7 +155,7 @@ export function registerCodeTools(
         .string()
         .optional()
         .describe("Base branch; defaults to project configuration."),
-      draft: z.boolean().optional(),
+      draft: z.boolean().optional().describe("Create as draft; false creates ready for review."),
       issues: z
         .array(z.number().int().positive())
         .min(1)
@@ -192,7 +191,7 @@ export function registerCodeTools(
         body,
         args.head,
         base === "unset" ? undefined : base,
-        { issues: [...closing] },
+        { issues: [...closing], draft: args.draft },
       );
       const reviewers = (await ctx.resolveDefaultReviewers()).value;
       if (reviewers !== "unset" && reviewers.length > 0) {
@@ -253,10 +252,27 @@ export function registerCodeTools(
     "Find pull request summaries.",
     {
       state: z.enum(["open", "closed", "all"]).optional(),
+      linked_to: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Return pull requests linked to this issue."),
       limit: z.number().int().positive().max(100).default(10),
       repo: REPO_PARAM,
     },
     async (args) => {
+      if (args.linked_to !== undefined) {
+        if (args.state !== undefined) {
+          throw new Error("linked_to cannot be combined with state");
+        }
+        if (!issue?.listLinkedPRs) {
+          throw new UnsupportedError("list_prs with linked_to");
+        }
+        const scope = await resolveScope(ctx, ["repo"], args.repo);
+        const prs = await issue.listLinkedPRs(scope, String(args.linked_to));
+        return json(prs.slice(0, args.limit).map(summarizePR));
+      }
       const prs = await code.listPRs(await repoOf(args.repo), {
         state: args.state,
         limit: args.limit,

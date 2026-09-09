@@ -367,7 +367,7 @@ async function createPR(
     prSchema,
     {
       method: 'POST',
-      input: { title, body: finalBody, head, base: baseBranch },
+      input: { title, body: finalBody, head, base: baseBranch, draft: opts?.draft },
     }
   );
 

@@ -13,7 +13,6 @@ import type {
   Label,
   Milestone,
 } from '../../core/types.js';
-import { toggleChecklistItem as toggleChecklistItemInBody } from '../../core/checklist.js';
 import { CURRENT_MILESTONE, pickCurrentMilestone } from '../../core/milestone.js';
 import { resolveUsernames } from '../../core/user.js';
 import { UnsupportedError } from '../../core/errors.js';
@@ -679,23 +678,6 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
     return raw.map(mapComment);
   }
 
-  async function toggleChecklistItem(
-    scope: Scope,
-    id: ItemId,
-    itemText: string,
-    checked?: boolean
-  ): Promise<{ matched: string; checked: boolean }> {
-    const repo = requireRepo(scope);
-    const issue = await getIssue(scope, id);
-    const result = toggleChecklistItemInBody(issue.body, itemText, checked);
-    await gh.api(
-      `/repos/${repoPath(repo)}/issues/${toIssueNumber(id)}`,
-      issueSchema,
-      { method: 'PATCH', input: { body: result.body } }
-    );
-    return { matched: result.matched, checked: result.checked };
-  }
-
   async function setRelationship(
     scope: Scope,
     id: ItemId,
@@ -799,7 +781,6 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
     setIssueStatus,
     addIssueComment,
     listIssueComments,
-    toggleChecklistItem,
     setRelationship,
     addSubIssue,
     listSubIssues,

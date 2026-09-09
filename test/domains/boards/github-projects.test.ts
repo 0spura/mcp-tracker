@@ -314,6 +314,65 @@ describe('createGitHubProjectsBoardProvider', () => {
       });
     });
 
+    it('writes dynamic date, number, and iteration fields with native values', async () => {
+      const { provider, fake } = makeProvider([
+        graphqlOk({
+          node: {
+            fields: {
+              nodes: [
+                {
+                  __typename: 'ProjectV2Field',
+                  id: 'F_estimate',
+                  name: 'Estimate',
+                  dataType: 'NUMBER',
+                },
+                {
+                  __typename: 'ProjectV2Field',
+                  id: 'F_target',
+                  name: 'Target date',
+                  dataType: 'DATE',
+                },
+                {
+                  __typename: 'ProjectV2IterationField',
+                  id: 'F_iteration',
+                  name: 'Iteration',
+                  configuration: {
+                    iterations: [{ id: 'I_1', title: 'Sprint 1' }],
+                  },
+                },
+                {
+                  __typename: 'ProjectV2MultiSelectField',
+                  id: 'F_scope',
+                  name: 'Scope',
+                  multiSelectOptions: [{ id: 'MS_api', name: 'API' }],
+                },
+              ],
+            },
+          },
+        }),
+        graphqlOk({ updateProjectV2ItemFieldValue: { projectV2Item: { id: 'PI_1' } } }),
+        graphqlOk({ updateProjectV2ItemFieldValue: { projectV2Item: { id: 'PI_1' } } }),
+        graphqlOk({ updateProjectV2ItemFieldValue: { projectV2Item: { id: 'PI_1' } } }),
+        graphqlOk({ updateProjectV2ItemFieldValue: { projectV2Item: { id: 'PI_1' } } }),
+      ]);
+
+      await provider.setItemFields({ repo, boardId: 'P_1' }, 'PI_1', {
+        Estimate: 3,
+        'Target date': '2026-09-30',
+        Iteration: 'Sprint 1',
+        Scope: ['API'],
+      });
+
+      expect((graphqlVariables(fake.calls[1]).input as Record<string, unknown>).value)
+        .toEqual({ number: 3 });
+      expect((graphqlVariables(fake.calls[2]).input as Record<string, unknown>).value)
+        .toEqual({ date: '2026-09-30' });
+      expect((graphqlVariables(fake.calls[3]).input as Record<string, unknown>).value)
+        .toEqual({ iterationId: 'I_1' });
+      expect((graphqlVariables(fake.calls[4]).input as Record<string, unknown>).value)
+        .toEqual({ multiSelectOptionIds: ['MS_api'] });
+    });
+
     it('throws UnsupportedError listing valid options for unknown option', async () => {
       const { provider } = makeProvider([
         graphqlOk({

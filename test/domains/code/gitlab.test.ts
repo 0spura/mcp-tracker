@@ -176,6 +176,18 @@ describe('createGitLabCodeProvider', () => {
       });
     });
 
+    it('passes the draft option to GitLab', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(mrFixture()) },
+      ]);
+
+      await provider.createPR(repo, 'title', 'body', 'feature', 'main', {
+        draft: true,
+      });
+
+      expect(restFields(fake.calls[0]).draft).toBe(true);
+    });
+
     it('fetches the default branch when base is omitted', async () => {
       const { provider, fake } = makeProvider([
         { stdout: JSON.stringify(projectFixture()) },

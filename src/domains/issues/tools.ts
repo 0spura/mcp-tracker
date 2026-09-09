@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ContextStore } from '../../context/store.js';
 import type { IssueProvider } from './capabilities.js';
 import type { BoardProvider } from '../boards/capabilities.js';
-import type { Issue, PR } from '../../core/types.js';
+import type { Issue, ProjectFieldValue } from '../../core/types.js';
 import type { IssueCatalog } from './capabilities.js';
 import { UnsupportedError } from '../../core/errors.js';
 import {
@@ -38,11 +38,37 @@ export function registerIssueTools(
       state: z.enum(['open', 'closed', 'all']).optional(),
       labels: z.array(z.string()).optional(),
       assignee: z.string().optional(),
+      parent: z.number().int().positive().optional().describe('Return direct sub-issues of this issue.'),
+      linked_to: z.number().int().positive().optional().describe('Return issues linked to this issue.'),
       limit: z.number().int().positive().max(100).default(10),
       repo: REPO_PARAM,
     },
     async (args) => {
-      const issues = await issue.listIssues(await scopeOf(args.repo), {
+      const scope = await scopeOf(args.repo);
+      if (args.parent !== undefined && args.linked_to !== undefined) {
+        throw new Error('parent and linked_to cannot be combined');
+      }
+      if (
+        (args.parent !== undefined || args.linked_to !== undefined) &&
+        (args.state !== undefined || args.labels !== undefined || args.assignee !== undefined)
+      ) {
+        throw new Error('parent or linked_to cannot be combined with state, labels, or assignee');
+      }
+
+      if (args.parent !== undefined) {
+        if (!issue.listSubIssues) throw new UnsupportedError('list_issues with parent');
+        return json((await issue.listSubIssues(scope, String(args.parent)))
+          .slice(0, args.limit)
+          .map(summarizeIssue));
+      }
+      if (args.linked_to !== undefined) {
+        if (!issue.listRelatedIssues) throw new UnsupportedError('list_issues with linked_to');
+        return json((await issue.listRelatedIssues(scope, String(args.linked_to)))
+          .slice(0, args.limit)
+          .map(summarizeIssue));
+      }
+
+      const issues = await issue.listIssues(scope, {
           state: args.state,
           labels: args.labels,
           assignee: args.assignee,
@@ -71,24 +97,31 @@ export function registerIssueTools(
     : z.string();
 
   const boardFields = catalog?.boardFields ?? [];
-  const fieldShape = Object.fromEntries(
-    boardFields
-      .filter((field) => field.name.toLowerCase() !== 'status')
-      .map((field) => {
-        const options = field.options?.map((option) => option.name) ?? [];
-        const value = options.length > 0
-          ? z.enum(options as [string, ...string[]])
-          : z.string();
-        return [field.name, value.optional()];
-      })
-  );
-  const fieldsSchema = Object.keys(fieldShape).length > 0
+  const fieldShape: Record<string, z.ZodTypeAny> = {};
+  for (const field of boardFields) {
+    if (field.name.toLowerCase() === 'status') continue;
+
+    const options = field.options?.map((option) => option.name) ?? [];
+    const value = options.length > 0
+      ? field.type === 'multiselect'
+        ? z.array(z.enum(options as [string, ...string[]]))
+        : z.enum(options as [string, ...string[]])
+      : field.type === 'number'
+        ? z.number().finite()
+        : field.type === 'date'
+          ? z.string().date()
+          : field.type === 'text'
+            ? z.string()
+            : undefined;
+    if (value) fieldShape[field.name] = value.optional();
+  }
+  const fieldsSchema = catalog?.boardFields
     ? z.object(fieldShape).strict()
     : z.record(z.string());
 
   server.tool(
     'create_issue',
-    'Create an issue with metadata, board fields, and relationships.',
+    'Create an issue with metadata and supported relationships.',
     {
       title: z.string(),
       body: z.string(),
@@ -161,12 +194,12 @@ export function registerIssueTools(
 
   server.tool(
     'update_issue',
-    'Update an issue and its relationships.',
+    'Update an issue\'s metadata, relationships, or attachments.',
     {
       number: ISSUE_NUMBER_PARAM,
       title: z.string().optional(),
       body: z.string().optional(),
-      labels: z.array(z.string()).optional(),
+      labels: z.array(labelSchema).optional().describe('Issue labels.'),
       assignees: z.array(z.string()).optional(),
       milestone: milestoneSchema.nullable().optional(),
       type: typeSchema.nullable().optional(),
@@ -257,7 +290,7 @@ export function registerIssueTools(
             await board.setItemFields(
               scope,
               itemId,
-              opts.fields as Record<string, string>
+              opts.fields as Record<string, ProjectFieldValue>
             );
           } catch (err) {
             warnings.push(`set board fields failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -276,91 +309,4 @@ export function registerIssueTools(
     }
   );
 
-  if (issue.toggleChecklistItem) {
-    const toggle = issue.toggleChecklistItem.bind(issue);
-    server.tool(
-      'toggle_checklist_item',
-      'Mark or unmark one issue checklist item by partial text; pass checked explicitly when possible.',
-      {
-        item_text: z.string().min(1).describe('Unique partial text of the markdown checklist item.'),
-        checked: z.boolean().optional().describe('true marks complete; false marks incomplete; omit to toggle.'),
-        number: ISSUE_NUMBER_PARAM,
-        repo: REPO_PARAM,
-      },
-      async (args) =>
-        json(
-          await toggle(
-            await scopeOf(args.repo),
-            String(args.number),
-            args.item_text,
-            args.checked
-          )
-        )
-    );
-  }
-
-  if (issue.addSubIssue && issue.listSubIssues) {
-    const listSubs = issue.listSubIssues.bind(issue);
-    server.tool(
-      'list_sub_issues',
-      'List child issues.',
-      { number: ISSUE_NUMBER_PARAM, repo: REPO_PARAM },
-      async (args) =>
-        json(await listSubs(await scopeOf(args.repo), String(args.number)))
-    );
-  }
-
-  if (issue.logTime) {
-    const logTime = issue.logTime.bind(issue);
-    server.tool(
-      'log_time',
-      'Log time on an issue.',
-      {
-        spend: z.string().optional().describe('Time spent, e.g. "1h30m".'),
-        estimate: z.string().optional().describe('Time estimate, e.g. "2h".'),
-        number: ISSUE_NUMBER_PARAM,
-        repo: REPO_PARAM,
-      },
-      async (args) =>
-        json(
-          await logTime(await scopeOf(args.repo), String(args.number), {
-            spend: args.spend,
-            estimate: args.estimate,
-          })
-        )
-    );
-  }
-
-  if (issue.listRelatedIssues || issue.listLinkedPRs) {
-    const listRelated = issue.listRelatedIssues?.bind(issue);
-    const listLinked = issue.listLinkedPRs?.bind(issue);
-    server.tool(
-      'list_linked_items',
-      'List items linked to an issue.',
-      {
-        type: z
-          .enum(['issues', 'prs', 'all'])
-          .optional()
-          .describe('Which linked items to fetch; defaults to "all".'),
-        number: ISSUE_NUMBER_PARAM,
-        repo: REPO_PARAM,
-      },
-      async (args) => {
-        const scope = await scopeOf(args.repo);
-        const id = String(args.number);
-        const type = args.type ?? 'all';
-        const result: { issues?: Issue[]; prs?: PR[] } = {};
-
-        if (type !== 'prs') {
-          if (!listRelated) throw new UnsupportedError('list_linked_items with type "issues"');
-          result.issues = await listRelated(scope, id);
-        }
-        if (type !== 'issues') {
-          if (!listLinked) throw new UnsupportedError('list_linked_items with type "prs"');
-          result.prs = await listLinked(scope, id);
-        }
-        return json(result);
-      }
-    );
-  }
 }

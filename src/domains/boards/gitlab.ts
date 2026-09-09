@@ -2,7 +2,12 @@ import { z } from 'zod';
 import type { GlabRunner } from '../../transport/glab.js';
 import type { Scope } from '../../core/scope.js';
 import type { BoardProvider } from './capabilities.js';
-import type { ItemId, ProjectItem, ProjectField } from '../../core/types.js';
+import type {
+  ItemId,
+  ProjectItem,
+  ProjectField,
+  ProjectFieldValue,
+} from '../../core/types.js';
 import { UnsupportedError } from '../../core/errors.js';
 
 function requireRepo(scope: Scope): NonNullable<Scope['repo']> {
@@ -152,7 +157,7 @@ export function createGitLabBoardProvider(glab: GlabRunner): BoardProvider {
   async function setItemFields(
     scope: Scope,
     itemId: ItemId,
-    fields: Record<string, string>
+    fields: Record<string, ProjectFieldValue>
   ): Promise<void> {
     const boardId = requireBoard(scope);
     const repo = requireRepo(scope);
@@ -166,6 +171,10 @@ export function createGitLabBoardProvider(glab: GlabRunner): BoardProvider {
         throw new UnsupportedError(
           `field "${name}" is not supported by this provider`
         );
+      }
+
+      if (typeof value !== 'string') {
+        throw new UnsupportedError(`field "${name}" requires a text option`);
       }
 
       const target = statusLists.find(

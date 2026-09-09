@@ -13,7 +13,6 @@ import type {
   Milestone,
   PR,
 } from '../../core/types.js';
-import { toggleChecklistItem as toggleInBody } from '../../core/checklist.js';
 import { CURRENT_MILESTONE, pickCurrentMilestone } from '../../core/milestone.js';
 import { resolveUsernames } from '../../core/user.js';
 import { ParseError, UnsupportedError } from '../../core/errors.js';
@@ -495,18 +494,6 @@ export function createGitLabIssueProvider(
     return raw.map(mapComment);
   }
 
-  async function toggleChecklistItem(
-    scope: Scope,
-    id: ItemId,
-    itemText: string,
-    checked?: boolean
-  ): Promise<{ matched: string; checked: boolean }> {
-    const issue = await getIssue(scope, id);
-    const result = toggleInBody(issue.body, itemText, checked);
-    await updateIssue(scope, id, { body: result.body });
-    return { matched: result.matched, checked: result.checked };
-  }
-
   // GitLab CE only supports "relates_to"; blocks/is_blocked_by require Premium.
   // Duplicate also degrades to relates_to because GitLab has no native duplicate link.
   const RELATIONSHIP_MAP: Record<RelationshipType, string> = {
@@ -696,47 +683,6 @@ export function createGitLabIssueProvider(
     return raw.map(mapMilestone);
   }
 
-  async function logTime(
-    scope: Scope,
-    id: ItemId,
-    opts: { spend?: string; estimate?: string }
-  ): Promise<{ warnings: string[] }> {
-    const repo = requireRepo(scope);
-    const ref = projectRef(repo);
-    const number = toIssueNumber(id);
-    const warnings: string[] = [];
-
-    if (opts.spend) {
-      try {
-        await glab.api(
-          `projects/${ref}/issues/${number}/add_spent_time`,
-          z.any(),
-          { method: 'POST', fields: { duration: opts.spend } }
-        );
-      } catch (err) {
-        warnings.push(
-          `add spent time failed: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
-
-    if (opts.estimate) {
-      try {
-        await glab.api(
-          `projects/${ref}/issues/${number}/time_estimate`,
-          z.any(),
-          { method: 'POST', fields: { duration: opts.estimate } }
-        );
-      } catch (err) {
-        warnings.push(
-          `set time estimate failed: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    }
-
-    return { warnings };
-  }
-
   async function attachFile(
     scope: Scope,
     filePath: string
@@ -789,13 +735,11 @@ export function createGitLabIssueProvider(
     setIssueStatus,
     addIssueComment,
     listIssueComments,
-    toggleChecklistItem,
     setRelationship,
     addSubIssue,
     listSubIssues,
     listLabels,
     listMilestones,
-    logTime,
     attachFile,
     listRelatedIssues,
     listLinkedPRs,

@@ -48,14 +48,6 @@ export interface IssueProvider {
   addIssueComment(scope: Scope, id: ItemId, body: string): Promise<void>;
   listIssueComments(scope: Scope, id: ItemId): Promise<Comment[]>;
 
-  // Optional sub-capabilities.
-  toggleChecklistItem?(
-    scope: Scope,
-    id: ItemId,
-    itemText: string,
-    checked?: boolean
-  ): Promise<{ matched: string; checked: boolean }>;
-
   setRelationship?(
     scope: Scope,
     id: ItemId,
@@ -71,12 +63,6 @@ export interface IssueProvider {
     scope: Scope,
     state?: 'open' | 'closed' | 'all'
   ): Promise<Milestone[]>;
-
-  logTime?(
-    scope: Scope,
-    id: ItemId,
-    opts: { spend?: string; estimate?: string }
-  ): Promise<{ warnings: string[] }>;
 
   /** Uploads are project-scoped, not issue-scoped: no issue id involved. */
   attachFile?(scope: Scope, filePath: string): Promise<{ url: string; markdown: string }>;

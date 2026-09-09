@@ -621,39 +621,6 @@ describe('createGitHubProjectsIssueProvider', () => {
     });
   });
 
-  describe('toggleChecklistItem', () => {
-    it('uses the shared checklist logic and writes the body back', async () => {
-      const { provider, fake } = makeProvider([
-        {
-          stdout: JSON.stringify(
-            issueFixture({ body: '- [ ] fix typo\n- [ ] add test' })
-          ),
-        },
-        { stdout: JSON.stringify(issueFixture({ body: '- [x] fix typo\n- [ ] add test' })) },
-      ]);
-
-      const result = await provider.toggleChecklistItem({ repo }, '42', 'fix typo');
-
-      expect(result.matched).toBe('fix typo');
-      expect(result.checked).toBe(true);
-      expect(fake.calls[1].args).toContain('/repos/acme/widget/issues/42');
-      expect(fake.calls[1].args).toContain('PATCH');
-      expect(restInput(fake.calls[1])).toEqual({
-        body: '- [x] fix typo\n- [ ] add test',
-      });
-    });
-
-    it('throws when no item matches', async () => {
-      const { provider } = makeProvider([
-        { stdout: JSON.stringify(issueFixture({ body: '- [ ] other' })) },
-      ]);
-
-      await expect(
-        provider.toggleChecklistItem({ repo }, '42', 'missing')
-      ).rejects.toThrow('no checklist item matching');
-    });
-  });
-
   describe('setRelationship', () => {
     it('maps blocks to native addBlockedBy', async () => {
       const { provider, fake } = makeProvider([

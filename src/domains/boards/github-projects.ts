@@ -2,7 +2,12 @@ import { z } from 'zod';
 import type { GhRunner } from '../../transport/gh.js';
 import type { Scope } from '../../core/scope.js';
 import type { BoardProvider } from './capabilities.js';
-import type { ItemId, ProjectItem, ProjectField } from '../../core/types.js';
+import type {
+  ItemId,
+  ProjectItem,
+  ProjectField,
+  ProjectFieldValue,
+} from '../../core/types.js';
 import { UnsupportedError } from '../../core/errors.js';
 
 export type BoardField =
@@ -13,7 +18,21 @@ export type BoardField =
       type: string;
       options: Map<string, { id: string; name: string }>;
     }
-  | { kind: 'text'; id: string; name: string; type: string }
+  | {
+      kind: 'iteration';
+      id: string;
+      name: string;
+      type: string;
+      options: Map<string, { id: string; name: string }>;
+    }
+  | {
+      kind: 'multi_select';
+      id: string;
+      name: string;
+      type: string;
+      options: Map<string, { id: string; name: string }>;
+    }
+  | { kind: 'text' | 'number' | 'date'; id: string; name: string; type: string }
   | { kind: 'other'; id: string; name: string; type: string };
 
 export type BoardFields = BoardField[];
@@ -196,7 +215,13 @@ export function createCaches() {
               nodes {
                 __typename
                 ... on ProjectV2SingleSelectField { id name options { id name } }
-                ... on ProjectV2Field { id name }
+                ... on ProjectV2MultiSelectField { id name multiSelectOptions { id name } }
+                ... on ProjectV2Field { id name dataType }
+                ... on ProjectV2IterationField {
+                  id
+                  name
+                  configuration { iterations { id title } }
+                }
               }
             }
           }
@@ -211,8 +236,18 @@ export function createCaches() {
               __typename: z.string(),
               id: z.string(),
               name: z.string(),
+              dataType: z.string().optional(),
               options: z
                 .array(z.object({ id: z.string(), name: z.string() }))
+                .optional(),
+              multiSelectOptions: z
+                .array(z.object({ id: z.string(), name: z.string() }))
+                .optional(),
+              configuration: z
+                .object({
+                  iterations: z.array(z.object({ id: z.string(), title: z.string() })),
+                })
+                .nullable()
                 .optional(),
             })
           ),
@@ -226,7 +261,7 @@ export function createCaches() {
       promise.then((data) => {
         const list: BoardFields = [];
         for (const field of data.node.fields.nodes) {
-          const type = deriveFieldType(field.__typename);
+          const type = deriveFieldType(field.__typename, field.dataType);
           if (field.__typename === 'ProjectV2SingleSelectField' && field.options) {
             const options = new Map<string, { id: string; name: string }>();
             for (const opt of field.options) {
@@ -239,8 +274,29 @@ export function createCaches() {
               type,
               options,
             });
-          } else if (field.__typename === 'ProjectV2Field') {
-            list.push({ kind: 'text', id: field.id, name: field.name, type });
+          } else if (field.__typename === 'ProjectV2MultiSelectField' && field.multiSelectOptions) {
+            const options = new Map<string, { id: string; name: string }>();
+            for (const opt of field.multiSelectOptions) {
+              options.set(opt.name.toLowerCase(), opt);
+            }
+            list.push({
+              kind: 'multi_select',
+              id: field.id,
+              name: field.name,
+              type,
+              options,
+            });
+          } else if (field.__typename === 'ProjectV2IterationField' && field.configuration) {
+            const options = new Map<string, { id: string; name: string }>();
+            for (const iteration of field.configuration.iterations) {
+              options.set(iteration.title.toLowerCase(), {
+                id: iteration.id,
+                name: iteration.title,
+              });
+            }
+            list.push({ kind: 'iteration', id: field.id, name: field.name, type, options });
+          } else if (type === 'text' || type === 'number' || type === 'date') {
+            list.push({ kind: type, id: field.id, name: field.name, type });
           } else {
             list.push({ kind: 'other', id: field.id, name: field.name, type });
           }
@@ -254,7 +310,8 @@ export function createCaches() {
   return { getIssueNodeId, primeIssueNodeId, getBoardFields, resolveBoardId };
 }
 
-function deriveFieldType(typename: string): string {
+function deriveFieldType(typename: string, dataType?: string): string {
+  if (typename === 'ProjectV2Field' && dataType) return dataType.toLowerCase();
   const stripped = typename.replace(/^ProjectV2/, '').replace(/Field$/, '');
   if (stripped === '') return 'text';
   return stripped.toLowerCase();
@@ -312,11 +369,14 @@ export async function updateProjectField(
   boardId: string,
   itemId: string,
   field: BoardField,
-  value: string
+  value: ProjectFieldValue
 ): Promise<void> {
   let fieldValue: Record<string, unknown>;
 
-  if (field.kind === 'single_select') {
+  if (field.kind === 'single_select' || field.kind === 'iteration') {
+    if (typeof value !== 'string') {
+      throw new UnsupportedError(`field "${field.name}" requires a text option`);
+    }
     const option = field.options.get(value.toLowerCase());
     if (!option) {
       const available = Array.from(field.options.values())
@@ -326,9 +386,39 @@ export async function updateProjectField(
         `option "${value}" not found for field "${field.name}"; available: ${available}`
       );
     }
-    fieldValue = { singleSelectOptionId: option.id };
+    fieldValue = field.kind === 'single_select'
+      ? { singleSelectOptionId: option.id }
+      : { iterationId: option.id };
+  } else if (field.kind === 'multi_select') {
+    if (!Array.isArray(value) || value.some((option) => typeof option !== 'string')) {
+      throw new UnsupportedError(`field "${field.name}" requires a list of text options`);
+    }
+    const optionIds = value.map((name) => {
+      const option = field.options.get(name.toLowerCase());
+      if (option) return option.id;
+      const available = Array.from(field.options.values())
+        .map((candidate) => candidate.name)
+        .join(', ');
+      throw new UnsupportedError(
+        `option "${name}" not found for field "${field.name}"; available: ${available}`
+      );
+    });
+    fieldValue = { multiSelectOptionIds: optionIds };
   } else if (field.kind === 'text') {
+    if (typeof value !== 'string') {
+      throw new UnsupportedError(`field "${field.name}" requires text`);
+    }
     fieldValue = { text: value };
+  } else if (field.kind === 'number') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new UnsupportedError(`field "${field.name}" requires a finite number`);
+    }
+    fieldValue = { number: value };
+  } else if (field.kind === 'date') {
+    if (typeof value !== 'string' || !isIsoDate(value)) {
+      throw new UnsupportedError(`field "${field.name}" requires a YYYY-MM-DD date`);
+    }
+    fieldValue = { date: value };
   } else {
     throw new UnsupportedError(
       `project field "${field.name}" of type "${field.type}"`
@@ -362,13 +452,19 @@ export async function updateProjectField(
   );
 }
 
+function isIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 export async function setProjectFieldByName(
   gh: GhRunner,
   boardId: string,
   itemId: string,
   fields: BoardFields,
   name: string,
-  value: string
+  value: ProjectFieldValue
 ): Promise<void> {
   const field = findField(fields, name);
   await updateProjectField(gh, boardId, itemId, field, value);
@@ -580,7 +676,7 @@ export function createGitHubProjectsBoardProvider(
   async function setItemFields(
     scope: Scope,
     itemId: ItemId,
-    fields: Record<string, string>
+    fields: Record<string, ProjectFieldValue>
   ): Promise<void> {
     const boardId = await requireResolvedBoard(scope);
     const boardFields = await getBoardFields(gh, boardId);

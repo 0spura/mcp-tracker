@@ -1,5 +1,10 @@
 import type { Scope } from '../../core/scope.js';
-import type { ProjectItem, ProjectField, ItemId } from '../../core/types.js';
+import type {
+  ProjectItem,
+  ProjectField,
+  ProjectFieldValue,
+  ItemId,
+} from '../../core/types.js';
 
 export interface BoardProvider {
   listBoardItems(scope: Scope): Promise<ProjectItem[]>;
@@ -9,6 +14,6 @@ export interface BoardProvider {
   setItemFields(
     scope: Scope,
     itemId: ItemId,
-    fields: Record<string, string>
+    fields: Record<string, ProjectFieldValue>
   ): Promise<void>;
 }

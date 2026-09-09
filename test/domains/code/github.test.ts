@@ -190,6 +190,19 @@ describe('createGitHubCodeProvider', () => {
       expect(input.base).toBe('develop');
     });
 
+    it('passes the draft option to GitHub', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify(prFixture()) },
+      ]);
+
+      await provider.createPR(repo, 'title', 'body', 'feature', 'main', {
+        draft: true,
+      });
+
+      const input = JSON.parse(fake.calls[0].input ?? '{}');
+      expect(input.draft).toBe(true);
+    });
+
     it('fetches the default branch when base is omitted', async () => {
       const { provider, fake } = makeProvider([
         { stdout: JSON.stringify({ default_branch: 'main' }) },

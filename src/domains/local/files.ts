@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { Comment, ItemId } from '../../core/types.js';
+import type { Comment, ItemId, ProjectFieldValue } from '../../core/types.js';
 
 /**
  * Local markdown storage: one `<id>-<slug>.md` file per issue.
@@ -25,7 +25,7 @@ export interface IssueMeta {
     duplicate_of: ItemId | null;
   };
   parent: ItemId | null;
-  fields: Record<string, string>;
+  fields: Record<string, ProjectFieldValue>;
 }
 
 export interface StoredIssue {

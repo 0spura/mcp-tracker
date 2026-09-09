@@ -440,39 +440,6 @@ describe('createGitLabIssueProvider', () => {
     });
   });
 
-  describe('toggleChecklistItem', () => {
-    it('uses the shared checklist logic and writes the body back', async () => {
-      const { provider, fake } = makeProvider([
-        {
-          stdout: JSON.stringify(
-            issueFixture({ description: '- [ ] fix typo\n- [ ] add test' })
-          ),
-        },
-        { stdout: JSON.stringify(issueFixture({ description: '- [x] fix typo\n- [ ] add test' })) },
-      ]);
-
-      const result = await provider.toggleChecklistItem({ repo }, '42', 'fix typo');
-
-      expect(result.matched).toBe('fix typo');
-      expect(result.checked).toBe(true);
-      expect(fake.calls[1].args.join(' ')).toContain('projects/acme%2Fwidget/issues/42');
-      expect(fake.calls[1].args).toContain('PUT');
-      expect(restFields(fake.calls[1])).toEqual({
-        description: '- [x] fix typo\n- [ ] add test',
-      });
-    });
-
-    it('throws when no item matches', async () => {
-      const { provider } = makeProvider([
-        { stdout: JSON.stringify(issueFixture({ description: '- [ ] other' })) },
-      ]);
-
-      await expect(
-        provider.toggleChecklistItem({ repo }, '42', 'missing')
-      ).rejects.toThrow('no checklist item matching');
-    });
-  });
-
   describe('setRelationship', () => {
     it('creates a relates_to link for blocks', async () => {
       const { provider, fake } = makeProvider([
@@ -618,42 +585,6 @@ describe('createGitLabIssueProvider', () => {
       await provider.createIssue({ repo }, 'A bug', 'details', { assignees: ['bob'] });
 
       expect(fake.calls[0].args.join(' ')).toContain('users?username=bob');
-    });
-  });
-
-  describe('logTime', () => {
-    it('logs spent and estimated time independently', async () => {
-      const { provider, fake } = makeProvider([
-        { stdout: JSON.stringify({}) },
-        { stdout: JSON.stringify({}) },
-      ]);
-
-      const { warnings } = await provider.logTime({ repo }, '42', {
-        spend: '1h30m',
-        estimate: '2h',
-      });
-
-      expect(warnings).toEqual([]);
-      expect(fake.calls[0].args.join(' ')).toContain('issues/42/add_spent_time');
-      expect(restFields(fake.calls[0])).toEqual({ duration: '1h30m' });
-      expect(fake.calls[1].args.join(' ')).toContain('issues/42/time_estimate');
-      expect(restFields(fake.calls[1])).toEqual({ duration: '2h' });
-    });
-
-    it('reports a partial failure as a warning without throwing', async () => {
-      const { provider, fake } = makeProvider([
-        { error: new CliError(1, 'not found', 'glab') },
-        { stdout: JSON.stringify({}) },
-      ]);
-
-      const { warnings } = await provider.logTime({ repo }, '42', {
-        spend: '1h',
-        estimate: '2h',
-      });
-
-      expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toContain('add spent time failed');
-      expect(fake.calls).toHaveLength(2);
     });
   });
 

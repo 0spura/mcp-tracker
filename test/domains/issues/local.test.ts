@@ -92,14 +92,6 @@ describe('local issue provider', () => {
     expect(leftovers).toEqual([]);
   });
 
-  it('toggles checklist items via shared logic', async () => {
-    const { issue } = await provider.createIssue(scope, 't', '- [ ] write tests\n- [ ] docs');
-    const result = await provider.toggleChecklistItem!(scope, issue.id, 'tests');
-    expect(result.checked).toBe(true);
-    const read = await provider.getIssue(scope, issue.id);
-    expect(read.body).toContain('- [x] write tests');
-  });
-
   it('tracks status and sub-issues', async () => {
     const parent = await provider.createIssue(scope, 'parent', 'b');
     const child = await provider.createIssue(scope, 'child', 'b');
