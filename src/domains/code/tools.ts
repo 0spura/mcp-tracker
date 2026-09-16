@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ContextStore } from "../../context/store.js";
 import type { Scope } from "../../core/scope.js";
-import type { ItemId, PR } from "../../core/types.js";
+import type { ItemId, PR, TrackerRepo } from "../../core/types.js";
 import type { IssueCatalog, IssueProvider } from "../issues/capabilities.js";
 import { resolveWorkflowStage } from "../issues/work-log.js";
 import type { CodeProvider } from "./capabilities.js";
@@ -22,20 +22,69 @@ export function summarizePR(pr: PR): Omit<PR, "body"> {
   return summary;
 }
 
-async function checkoutBranch(
+export interface BranchCheckout {
+  checkedOut: boolean;
+  warning?: string;
+}
+
+/** Extract a lowercase "owner/repo" slug from a GitHub remote URL. */
+export function parseGitHubSlug(remoteUrl: string): string | null {
+  const match = /github\.com[/:]([^/\s]+)\/([^/\s]+?)(?:\.git)?\s*$/i.exec(
+    remoteUrl.trim(),
+  );
+  if (!match) return null;
+  return `${match[1]}/${match[2]}`.toLowerCase();
+}
+
+async function cwdRepoSlug(
+  runGit: (cmd: string, args: string[]) => Promise<string>,
+): Promise<string | null> {
+  try {
+    const url = await runGit("git", ["remote", "get-url", "origin"]);
+    return parseGitHubSlug(url);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check out a branch that was just created through the provider API.
+ * The provider call targets the explicit repo argument, but git runs in the
+ * server process cwd, which may be a different clone (or none). Never run
+ * mutating git commands against a repo we positively know is not the target:
+ * skip the local checkout and report how to finish it by hand instead.
+ */
+export async function checkoutBranch(
   runGit: (cmd: string, args: string[]) => Promise<string>,
   name: string,
-): Promise<void> {
+  repo: TrackerRepo,
+): Promise<BranchCheckout> {
   try {
     await runGit("git", ["checkout", name]);
-    return;
-  } catch (checkoutError) {
-    try {
-      await runGit("git", ["fetch", "--all", "--prune"]);
-      await runGit("git", ["checkout", "--track", `origin/${name}`]);
-    } catch {
-      throw checkoutError;
-    }
+    return { checkedOut: true };
+  } catch {
+    // Fall through to targeted recovery below.
+  }
+  const target = `${repo.owner}/${repo.repo}`.toLowerCase();
+  const cwdSlug = await cwdRepoSlug(runGit);
+  if (cwdSlug !== null && cwdSlug !== target) {
+    return {
+      checkedOut: false,
+      warning:
+        `branch "${name}" was created on ${target}, but the local checkout was skipped: ` +
+        `this process runs in the "${cwdSlug}" clone. Run \`git fetch origin && git checkout ${name}\` ` +
+        `inside the ${target} clone.`,
+    };
+  }
+  try {
+    await runGit("git", ["fetch", "origin", name]);
+    await runGit("git", ["checkout", "-B", name, `origin/${name}`]);
+    return { checkedOut: true };
+  } catch (err) {
+    throw new Error(
+      `created branch "${name}" on ${target} but could not check it out locally: ` +
+        `${(err as Error).message}`,
+    );
   }
 }
 
@@ -102,8 +151,8 @@ export function registerCodeTools(
         .min(8)
         .max(96)
         .regex(
-          /^[a-z][a-z0-9-]*\/[0-9]+-[a-z0-9]+(?:-[a-z0-9]+){1,7}$/,
-          "Use <type>/<issue>-<2-8-word-kebab-case-purpose>.",
+          /^[a-z][a-z0-9-]*\/[0-9]+-[a-z0-9]+(?:-[a-z0-9]+){0,7}$/,
+          "Use <type>/<issue>-<1-8-word-kebab-case-purpose>.",
         )
         .describe(
           "Required descriptive name, e.g. feat/96-distribute-and-promote-model-candidates; max 96 characters.",
@@ -129,8 +178,11 @@ export function registerCodeTools(
         args.branch_name,
         args.base,
       );
-      await checkoutBranch(runGit, result.name);
+      const checkout = await checkoutBranch(runGit, result.name, repo);
       const warnings: string[] = [];
+      if (!checkout.checkedOut && checkout.warning) {
+        warnings.push(checkout.warning);
+      }
       const scope = await resolveScope(ctx, []);
       await applyStageTrigger(
         ctx,
@@ -140,7 +192,7 @@ export function registerCodeTools(
         "createBranch",
         warnings,
       );
-      return json({ ...result, warnings });
+      return json({ ...result, checked_out: checkout.checkedOut, warnings });
     },
   );
 
