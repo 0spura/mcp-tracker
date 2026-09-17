@@ -17,7 +17,9 @@ function makeProvider(responses: Parameters<typeof createFakeGh>[0]) {
 
 function issueFixture(overrides: Record<string, unknown> = {}) {
   const number = (overrides.number as number | undefined) ?? 42;
+  const id = (overrides.id as number | undefined) ?? number * 100;
   return {
+    id,
     number,
     title: 'A bug',
     body: 'details',
@@ -325,7 +327,7 @@ describe('createGitHubProjectsIssueProvider', () => {
       expect((statusVars.input as Record<string, unknown>).itemId).toBe('PI_42');
 
       expect(fake.calls[4].args.join(' ')).toContain('/repos/acme/widget/issues/5/sub_issues');
-      expect(restInput(fake.calls[4])).toEqual({ sub_issue_id: 42 });
+      expect(restInput(fake.calls[4])).toEqual({ sub_issue_id: 4200 });
 
       expect(graphqlQuery(fake.calls[5])).toContain('issue(number: $number)');
       expect(graphqlQuery(fake.calls[5])).toContain('repository(owner: $owner, name: $repo)');
@@ -676,14 +678,18 @@ describe('createGitHubProjectsIssueProvider', () => {
   });
 
   describe('addSubIssue / listSubIssues', () => {
-    it('adds a sub-issue via the REST endpoint', async () => {
-      const { provider, fake } = makeProvider([{ stdout: JSON.stringify({}) }]);
+    it('resolves the child database id before adding it as a sub-issue', async () => {
+      const { provider, fake } = makeProvider([
+        { stdout: JSON.stringify({ id: 600, number: 6 }) },
+        { stdout: JSON.stringify({}) },
+      ]);
 
       await provider.addSubIssue({ repo }, '5', '6');
 
-      expect(fake.calls[0].args.join(' ')).toContain('/repos/acme/widget/issues/5/sub_issues');
-      expect(fake.calls[0].args).toContain('POST');
-      expect(restInput(fake.calls[0])).toEqual({ sub_issue_id: 6 });
+      expect(fake.calls[0].args.join(' ')).toContain('/repos/acme/widget/issues/6');
+      expect(fake.calls[1].args.join(' ')).toContain('/repos/acme/widget/issues/5/sub_issues');
+      expect(fake.calls[1].args).toContain('POST');
+      expect(restInput(fake.calls[1])).toEqual({ sub_issue_id: 600 });
     });
 
     it('lists sub-issues', async () => {

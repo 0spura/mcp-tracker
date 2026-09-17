@@ -57,6 +57,7 @@ const milestoneSchema = z.object({
 });
 
 const issueSchema = z.object({
+  id: z.number().optional(),
   number: z.number(),
   title: z.string(),
   body: z.string().nullable(),
@@ -286,6 +287,43 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
   const issueFieldCache = new Map<string, Promise<z.infer<typeof issueFieldDefinitionSchema>[]>>();
   const issueTypeCache = new Map<string, Promise<IssueType[]>>();
   const issueLabelListCache = new Map<string, Promise<Label[]>>();
+  const issueDatabaseIdCache = new Map<string, Promise<number>>();
+
+  function issueDatabaseIdKey(
+    repo: NonNullable<Scope['repo']>,
+    id: ItemId
+  ): string {
+    return `${repoPath(repo)}#${id}`;
+  }
+
+  function primeIssueDatabaseId(
+    repo: NonNullable<Scope['repo']>,
+    id: ItemId,
+    databaseId: number
+  ): void {
+    issueDatabaseIdCache.set(
+      issueDatabaseIdKey(repo, id),
+      Promise.resolve(databaseId)
+    );
+  }
+
+  function getIssueDatabaseId(
+    repo: NonNullable<Scope['repo']>,
+    id: ItemId
+  ): Promise<number> {
+    const key = issueDatabaseIdKey(repo, id);
+    const cached = issueDatabaseIdCache.get(key);
+    if (cached) return cached;
+
+    const promise = gh
+      .api(
+        `/repos/${repoPath(repo)}/issues/${toIssueNumber(id)}`,
+        z.object({ id: z.number() })
+      )
+      .then((raw) => raw.id);
+    issueDatabaseIdCache.set(key, promise);
+    return promise;
+  }
 
   async function listIssueTypes(scope: Scope): Promise<IssueType[]> {
     const repo = requireRepo(scope);
@@ -362,6 +400,9 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
     const issue = mapIssue(raw);
     if (raw.node_id) {
       primeIssueNodeId(issue.id, raw.node_id);
+    }
+    if (typeof raw.id === 'number') {
+      primeIssueDatabaseId(repo, issue.id, raw.id);
     }
 
     if (opts?.issueFields && Object.keys(opts.issueFields).length > 0) {
@@ -727,12 +768,15 @@ export function createGitHubProjectsIssueProvider(gh: GhRunner): IssueProvider {
 
   async function addSubIssue(scope: Scope, parentId: ItemId, childId: ItemId): Promise<void> {
     const repo = requireRepo(scope);
+    // The sub-issues API keys the child by its globally unique database id,
+    // not by the repository-scoped issue number exposed as ItemId.
+    const subIssueId = await getIssueDatabaseId(repo, childId);
     await gh.api(
       `/repos/${repoPath(repo)}/issues/${toIssueNumber(parentId)}/sub_issues`,
       z.any(),
       {
         method: 'POST',
-        input: { sub_issue_id: toIssueNumber(childId) },
+        input: { sub_issue_id: subIssueId },
       }
     );
   }
