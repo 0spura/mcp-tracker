@@ -104,7 +104,7 @@ export async function loadConfig(cwd: string = process.cwd()): Promise<TrackerCo
   const base = await loadConfigFile(join(cwd, CONFIG_FILE), versionedRawSchema);
   const local = await loadConfigFile(join(cwd, LOCAL_CONFIG_FILE), localRawSchema);
 
-  await ensureLocalGitignoreEntry(cwd);
+  //await ensureLocalGitignoreEntry(cwd);
 
   return mergeConfigs(base, local);
 }
