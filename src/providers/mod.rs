@@ -1,6 +1,6 @@
 pub mod github;
 
-use crate::domain::{AppError, Issue, IssueSummary};
+use crate::domain::{AppError, CheckRun, Issue, IssueSummary, PullRequest, PullRequestSummary};
 
 /// Bounded query for issue summaries. Every set field maps to one provider filter.
 #[derive(Debug)]
@@ -58,10 +58,142 @@ impl Attachment {
     }
 }
 
+/// Bounded query for pull request summaries. Every set field maps to one provider filter.
+#[derive(Debug)]
+pub struct PrQuery {
+    /// `open`, `closed`, `merged`, or `all`.
+    pub state: String,
+    pub limit: usize,
+    pub labels: Vec<String>,
+    pub assignee: Option<String>,
+    pub author: Option<String>,
+    pub base: Option<String>,
+    pub head: Option<String>,
+    pub search: Option<String>,
+    pub draft: bool,
+}
+
+#[derive(Debug)]
+pub struct NewPr {
+    pub title: String,
+    pub body: String,
+    pub base: Option<String>,
+    pub head: Option<String>,
+    pub draft: bool,
+    /// Issues the pull request closes when it merges.
+    pub closes: Vec<u64>,
+}
+
+#[derive(Debug)]
+pub struct PrPatch {
+    pub title: Option<String>,
+    pub body: Option<BodyChange>,
+    pub base: Option<String>,
+    pub labels_add: Vec<String>,
+    pub labels_remove: Vec<String>,
+    pub reviewers_add: Vec<String>,
+    pub reviewers_remove: Vec<String>,
+    pub assignees_add: Vec<String>,
+    pub assignees_remove: Vec<String>,
+    pub milestone: Option<String>,
+    pub expect_updated_at: Option<String>,
+}
+
+impl PrPatch {
+    /// True when no field would be written; `expect_updated_at` guards a write, it is not one.
+    pub fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.body.is_none()
+            && self.base.is_none()
+            && self.labels_add.is_empty()
+            && self.labels_remove.is_empty()
+            && self.reviewers_add.is_empty()
+            && self.reviewers_remove.is_empty()
+            && self.assignees_add.is_empty()
+            && self.assignees_remove.is_empty()
+            && self.milestone.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ReviewEvent {
+    Approve,
+    RequestChanges,
+    Comment,
+}
+
+impl ReviewEvent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::RequestChanges => "request_changes",
+            Self::Comment => "comment",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum MergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
+
+impl MergeMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Merge => "merge",
+            Self::Squash => "squash",
+            Self::Rebase => "rebase",
+        }
+    }
+}
+
 pub trait WorkItemProvider {
     fn authenticate(&self) -> Result<(), AppError>;
     fn create(&self, issue: &NewIssue) -> Result<Issue, AppError>;
     fn list(&self, query: &IssueQuery) -> Result<Vec<IssueSummary>, AppError>;
     fn show(&self, number: u64) -> Result<Issue, AppError>;
     fn edit(&self, number: u64, patch: &IssuePatch) -> Result<Issue, AppError>;
+}
+
+/// Pull request operations, kept separate from `WorkItemProvider` so each seam stays narrow.
+pub trait PullRequestProvider {
+    fn authenticate(&self) -> Result<(), AppError>;
+    fn create(&self, pr: &NewPr) -> Result<PullRequest, AppError>;
+    fn list(&self, query: &PrQuery) -> Result<Vec<PullRequestSummary>, AppError>;
+    fn show(&self, number: u64) -> Result<PullRequest, AppError>;
+    /// Fetches the pull request once, then applies the requested change.
+    fn edit(&self, number: u64, patch: &PrPatch) -> Result<PullRequest, AppError>;
+    fn diff(&self, number: u64, name_only: bool) -> Result<String, AppError>;
+    fn checks(&self, number: u64, required: bool) -> Result<Vec<CheckRun>, AppError>;
+    fn review(&self, number: u64, event: ReviewEvent, body: Option<&str>) -> Result<(), AppError>;
+    fn merge(
+        &self,
+        number: u64,
+        method: Option<MergeMethod>,
+        delete_branch: bool,
+        auto: bool,
+    ) -> Result<(), AppError>;
+    /// Marks the pull request ready for review, or back to draft when `draft` is set.
+    fn set_ready(&self, number: u64, draft: bool) -> Result<(), AppError>;
+    fn close(
+        &self,
+        number: u64,
+        comment: Option<&str>,
+        delete_branch: bool,
+    ) -> Result<(), AppError>;
+    fn reopen(&self, number: u64, comment: Option<&str>) -> Result<(), AppError>;
+}
+
+/// Applies a requested body change to the body currently stored by the provider.
+pub fn resolve_body_change(current: &str, change: &BodyChange) -> Result<String, AppError> {
+    match change {
+        BodyChange::Replace(text) => Ok(text.clone()),
+        BodyChange::Append(text) => Ok(crate::domain::body::append(current, text)),
+        BodyChange::ReplaceSection { heading, body } => {
+            crate::domain::body::replace_section(current, heading, body)
+        }
+        BodyChange::Patch(patch) => crate::domain::patch::apply(current, patch),
+    }
 }

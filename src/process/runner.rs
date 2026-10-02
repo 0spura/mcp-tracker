@@ -23,6 +23,7 @@ pub enum ProcessError {
 pub struct ProcessOutput {
     pub success: bool,
     pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
 }
 
 pub fn run(
@@ -71,7 +72,7 @@ fn run_with_deadline(
     }));
     let (stderr_sender, stderr_receiver) = mpsc::sync_channel(1);
     drop(thread::spawn(move || {
-        let _ = stderr_sender.send(drain(stderr, false));
+        let _ = stderr_sender.send(drain(stderr, true));
     }));
     let input_writer = input.map(|bytes| {
         let stdin = child.stdin.take();
@@ -110,7 +111,7 @@ fn run_with_deadline(
     };
 
     let (stdout, stdout_overflow) = receive(stdout_receiver, started, deadline)??;
-    let (_, stderr_overflow) = receive(stderr_receiver, started, deadline)??;
+    let (stderr, stderr_overflow) = receive(stderr_receiver, started, deadline)??;
     if let Some(writer) = input_writer {
         receive(writer, started, deadline)??;
     }
@@ -121,6 +122,7 @@ fn run_with_deadline(
     Ok(ProcessOutput {
         success: status.success(),
         stdout,
+        stderr,
     })
 }
 

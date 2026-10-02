@@ -2,9 +2,10 @@ mod mapping;
 mod read;
 mod write;
 
-use crate::domain::{AppError, Issue, IssueSummary, body, patch};
-use crate::process::runner::{self, ProcessError};
-use crate::providers::{BodyChange, IssuePatch, IssueQuery, NewIssue, WorkItemProvider};
+use crate::domain::{AppError, Issue, IssueSummary};
+use crate::providers::{
+    IssuePatch, IssueQuery, NewIssue, WorkItemProvider, resolve_body_change,
+};
 
 pub struct GitHubIssues {
     repo: String,
@@ -16,23 +17,13 @@ impl GitHubIssues {
     }
 
     pub(super) fn run_gh(&self, args: &[String], input: Option<Vec<u8>>) -> Result<Vec<u8>, AppError> {
-        let output = runner::run("gh", args, input, None).map_err(map_process_error)?;
-        if !output.success {
-            return Err(AppError::github_cli());
-        }
-        Ok(output.stdout)
+        super::run_gh(args, input)
     }
 }
 
 impl WorkItemProvider for GitHubIssues {
     fn authenticate(&self) -> Result<(), AppError> {
-        let args = ["auth", "status", "--hostname", "github.com"].map(str::to_owned);
-        let output = runner::run("gh", &args, None, None).map_err(map_process_error)?;
-        if output.success {
-            Ok(())
-        } else {
-            Err(AppError::authentication())
-        }
+        super::authenticate()
     }
 
     fn create(&self, issue: &NewIssue) -> Result<Issue, AppError> {
@@ -60,12 +51,7 @@ impl WorkItemProvider for GitHubIssues {
         }
         let resolved = match &patch.body {
             None => None,
-            Some(BodyChange::Replace(text)) => Some(text.clone()),
-            Some(BodyChange::Append(text)) => Some(body::append(&current.body, text)),
-            Some(BodyChange::ReplaceSection { heading, body: text }) => {
-                Some(body::replace_section(&current.body, heading, text)?)
-            }
-            Some(BodyChange::Patch(patch)) => Some(patch::apply(&current.body, patch)?),
+            Some(change) => Some(resolve_body_change(&current.body, change)?),
         };
         write::edit(
             self,
@@ -74,14 +60,5 @@ impl WorkItemProvider for GitHubIssues {
             resolved.as_deref(),
             &patch.attachments,
         )
-    }
-}
-
-fn map_process_error(error: ProcessError) -> AppError {
-    match error {
-        ProcessError::NotFound => AppError::dependency(),
-        ProcessError::Timeout => AppError::timeout(),
-        ProcessError::OutputLimit => AppError::output_limit(),
-        ProcessError::Io => AppError::github_cli(),
     }
 }

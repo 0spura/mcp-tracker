@@ -45,21 +45,28 @@ impl AppError {
         Self::new("not_issue", "the selected number is not a GitHub issue")
     }
 
+    pub const fn not_pull_request() -> Self {
+        Self::new(
+            "not_pull_request",
+            "the selected number is not a GitHub pull request",
+        )
+    }
+
     pub const fn section_not_found() -> Self {
         Self::new(
             "section_not_found",
-            "the section heading was not found in the issue body",
+            "the section heading was not found in the body",
         )
     }
 
     pub const fn conflict() -> Self {
-        Self::new("conflict", "the issue changed since it was read")
+        Self::new("conflict", "the item changed since it was read")
     }
 
     pub const fn patch_conflict() -> Self {
         Self::new(
             "patch_conflict",
-            "the patch does not apply to the current issue body",
+            "the patch does not apply to the current body",
         )
     }
 

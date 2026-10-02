@@ -21,8 +21,144 @@ fn write_to(stdout: &mut impl Write, output: &SuccessOutput) -> Result<(), AppEr
                 writeln!(stdout).map_err(|_| AppError::output())?;
             }
         }
+        SuccessOutput::PullRequest(pr) => write_pull_request(stdout, pr)?,
+        SuccessOutput::PullRequests(prs) => {
+            for pr in prs {
+                write!(stdout, "#{} ", pr.number).map_err(|_| AppError::output())?;
+                write_safe(stdout, &pr.title, false)?;
+                write!(stdout, " [{}]", pr_state(pr.state)).map_err(|_| AppError::output())?;
+                if pr.draft {
+                    write!(stdout, " [draft]").map_err(|_| AppError::output())?;
+                }
+                write!(stdout, " ").map_err(|_| AppError::output())?;
+                write_safe(stdout, &pr.url, false)?;
+                writeln!(stdout).map_err(|_| AppError::output())?;
+            }
+        }
+        SuccessOutput::Checks(checks) => {
+            for check in checks {
+                write_safe(stdout, &check.name, false)?;
+                write!(stdout, ": ").map_err(|_| AppError::output())?;
+                write_safe(stdout, &check.state, false)?;
+                if let Some(bucket) = &check.bucket {
+                    write!(stdout, " ({bucket})").map_err(|_| AppError::output())?;
+                }
+                if let Some(link) = &check.link {
+                    write!(stdout, " ").map_err(|_| AppError::output())?;
+                    write_safe(stdout, link, false)?;
+                }
+                writeln!(stdout).map_err(|_| AppError::output())?;
+            }
+        }
+        SuccessOutput::Diff { diff, .. } => {
+            write_safe(stdout, diff, true)?;
+            if !diff.ends_with('\n') {
+                writeln!(stdout).map_err(|_| AppError::output())?;
+            }
+        }
+        SuccessOutput::Merge {
+            number,
+            method,
+            auto,
+        } => {
+            write!(stdout, "pr #{number} ").map_err(|_| AppError::output())?;
+            if *auto {
+                write!(stdout, "auto-merge queued").map_err(|_| AppError::output())?;
+            } else {
+                write!(stdout, "merged").map_err(|_| AppError::output())?;
+            }
+            if let Some(method) = method {
+                write!(stdout, " ({method})").map_err(|_| AppError::output())?;
+            }
+            writeln!(stdout).map_err(|_| AppError::output())?;
+        }
+        SuccessOutput::Review { number, event } => {
+            write!(stdout, "pr #{number} reviewed: ").map_err(|_| AppError::output())?;
+            write_safe(stdout, event, false)?;
+            writeln!(stdout).map_err(|_| AppError::output())?;
+        }
+        SuccessOutput::Ready { number, draft } => {
+            write!(stdout, "pr #{number} ").map_err(|_| AppError::output())?;
+            if *draft {
+                writeln!(stdout, "converted to draft").map_err(|_| AppError::output())?;
+            } else {
+                writeln!(stdout, "ready for review").map_err(|_| AppError::output())?;
+            }
+        }
+        SuccessOutput::State { number, state } => {
+            write!(stdout, "pr #{number} ").map_err(|_| AppError::output())?;
+            write_safe(stdout, state, false)?;
+            writeln!(stdout).map_err(|_| AppError::output())?;
+        }
     }
     Ok(())
+}
+
+fn write_pull_request(
+    stdout: &mut impl Write,
+    pr: &crate::domain::PullRequest,
+) -> Result<(), AppError> {
+    write!(stdout, "#{} ", pr.number).map_err(|_| AppError::output())?;
+    write_safe(stdout, &pr.title, false)?;
+    write!(stdout, " [{}]", pr_state(pr.state)).map_err(|_| AppError::output())?;
+    if pr.draft {
+        write!(stdout, " [draft]").map_err(|_| AppError::output())?;
+    }
+    writeln!(stdout).map_err(|_| AppError::output())?;
+    write_safe(stdout, &pr.url, false)?;
+    writeln!(stdout).map_err(|_| AppError::output())?;
+    write!(stdout, "Branch: ").map_err(|_| AppError::output())?;
+    write_safe(stdout, &pr.head_ref, false)?;
+    write!(stdout, " -> ").map_err(|_| AppError::output())?;
+    write_safe(stdout, &pr.base_ref, false)?;
+    writeln!(stdout).map_err(|_| AppError::output())?;
+    write!(stdout, "Author: ").map_err(|_| AppError::output())?;
+    write_safe(stdout, &pr.author, false)?;
+    writeln!(stdout).map_err(|_| AppError::output())?;
+    write!(stdout, "Created: ").map_err(|_| AppError::output())?;
+    write_safe(stdout, &pr.created_at, false)?;
+    writeln!(stdout).map_err(|_| AppError::output())?;
+    write!(stdout, "Updated: ").map_err(|_| AppError::output())?;
+    write_safe(stdout, &pr.updated_at, false)?;
+    writeln!(stdout).map_err(|_| AppError::output())?;
+    if let Some(merged_at) = &pr.merged_at {
+        write!(stdout, "Merged: ").map_err(|_| AppError::output())?;
+        write_safe(stdout, merged_at, false)?;
+        writeln!(stdout).map_err(|_| AppError::output())?;
+    }
+    if let Some(mergeable) = &pr.mergeable {
+        write!(stdout, "Mergeable: ").map_err(|_| AppError::output())?;
+        write_safe(stdout, mergeable, false)?;
+        writeln!(stdout).map_err(|_| AppError::output())?;
+    }
+    if let Some(decision) = &pr.review_decision {
+        write!(stdout, "Review: ").map_err(|_| AppError::output())?;
+        write_safe(stdout, decision, false)?;
+        writeln!(stdout).map_err(|_| AppError::output())?;
+    }
+    write_names(stdout, "Labels", &pr.labels)?;
+    write_names(stdout, "Assignees", &pr.assignees)?;
+    writeln!(stdout).map_err(|_| AppError::output())?;
+    write_safe(stdout, &pr.body, true)?;
+    writeln!(stdout).map_err(|_| AppError::output())
+}
+
+fn write_names(
+    stdout: &mut impl Write,
+    label: &str,
+    names: &[String],
+) -> Result<(), AppError> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    write!(stdout, "{label}: ").map_err(|_| AppError::output())?;
+    for (index, name) in names.iter().enumerate() {
+        if index > 0 {
+            write!(stdout, ", ").map_err(|_| AppError::output())?;
+        }
+        write_safe(stdout, name, false)?;
+    }
+    writeln!(stdout).map_err(|_| AppError::output())
 }
 
 fn write_issue(stdout: &mut impl Write, issue: &Issue) -> Result<(), AppError> {
@@ -67,6 +203,14 @@ fn state(state: crate::domain::IssueState) -> &'static str {
     match state {
         crate::domain::IssueState::Open => "open",
         crate::domain::IssueState::Closed => "closed",
+    }
+}
+
+fn pr_state(state: crate::domain::PullRequestState) -> &'static str {
+    match state {
+        crate::domain::PullRequestState::Open => "open",
+        crate::domain::PullRequestState::Closed => "closed",
+        crate::domain::PullRequestState::Merged => "merged",
     }
 }
 

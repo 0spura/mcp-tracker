@@ -1,11 +1,17 @@
+pub mod common;
 mod issues;
+pub mod prs;
 
 use clap::{Parser, Subcommand};
 
 use crate::config::Provider;
 
 #[derive(Debug, Parser)]
-#[command(name = "workctl", version, about = "Manage GitHub issues from the terminal")]
+#[command(
+    name = "workctl",
+    version,
+    about = "Manage GitHub issues and pull requests from the terminal"
+)]
 pub struct Cli {
     /// Work-item provider; only `github` is implemented
     #[arg(long, global = true, value_enum)]
@@ -29,6 +35,7 @@ pub enum OutputFormat {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Issue(issues::IssueArgs),
+    Pr(prs::PrArgs),
 }
 
-pub use issues::{EditArgs, IssueAction, IssueArgs, ListArgs};
+pub use issues::{IssueAction, IssueArgs, ListArgs};
