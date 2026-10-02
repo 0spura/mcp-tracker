@@ -1,237 +1,90 @@
-# mcp-tracker
+# workctl
 
-MCP server for coding agents to interact with code hosts and issue trackers. Install it once for your user, then configure behavior per project.
+`workctl` is a local Rust CLI for GitHub issue create, list, show, and edit. It uses the official `gh` CLI for authenticated GitHub operations; it does not access or store credentials itself.
 
-## How it works
+## Requirements
 
-- The server runs as a stdio process started by your MCP client (Cursor, Claude Code, etc).
-- All GitHub/GitLab communication goes through the `gh`/`glab` CLIs, which own authentication. This project never reads or stores tokens.
-- Install once at user level: point your MCP client at `dist/index.js`.
-- Behavior is defined per project via `.mcp-tracker.json` (versioned) and `.mcp-tracker.local.json` (gitignored).
-- Value precedence: explicit tool argument > project config > git derivation.
+- Stable Rust toolchain and Cargo
+- `git` for repository and remote discovery
+- GitHub CLI (`gh`) installed and authenticated for GitHub operations
 
-## Setup
+Help and version do not require `git` or `gh`.
 
-### 1. External dependencies
+## Build and verify
 
-- Node.js ≥ 18
-- `gh` CLI authenticated (for GitHub providers)
-- `glab` CLI authenticated (for GitLab providers, optional)
-- `git`
+```sh
+cargo build --release
+cargo test
+./target/release/workctl --help
+```
 
-### 2. Configure the MCP client at user level
+## Commands
 
-Minimal example:
+```sh
+workctl issue create --title "Fix the parser" --body "Details"
+workctl issue create --title "Crash on save" --body "Screenshot attached" --attach shot.png#Screenshot
+workctl issue list --state open --limit 30
+workctl issue list --label bug --label p1 --assignee me --search "in:title fix"
+workctl issue show 123
+workctl issue edit 123 --title "Updated title"
+workctl issue edit 123 --append-body "Reproduced on 1.4.2."
+workctl issue edit 123 --replace-section "## Acceptance" --section-body "New criteria"
+workctl issue edit 123 --patch-file body.patch
+workctl issue edit 123 --attach shot.png
+workctl issue edit 123 --title "Updated title" --expect-updated-at 2026-01-02T00:00:00Z
+```
+
+Output is compact JSON by default. Add `--format text` for human-readable output; terminal control characters in provider data are escaped, while issue-body newlines and tabs remain readable. Errors are JSON on stderr with a nonzero exit code. `issue list` returns summaries without bodies; `show`, `create`, and `edit` return full issue data. There is no delete command in this release.
+
+Global options apply before or after the issue subcommand:
+
+```sh
+workctl --repo owner/repo issue list
+workctl issue list --provider github --format text
+```
+
+The default list state is `open`; accepted states are `open`, `closed`, and `all`. The limit defaults to 30 and accepts values from 1 through 1000. Create and edit do not prompt interactively. An explicit empty edit body clears the issue body.
+
+## Editing without rewriting the body
+
+An edit never requires the whole new body. Pick at most one body change per invocation:
+
+| Flag | Effect |
+| --- | --- |
+| `--body TEXT` / `--body-file FILE` | Replaces the body (`-` reads stdin) |
+| `--append-body TEXT` / `--append-body-file FILE` | Appends a new block, keeping one separating newline |
+| `--replace-section HEADING --section-body TEXT` / `--section-body-file FILE` | Replaces the content of one ATX section (`## Heading`), leaving other sections alone |
+| `--patch-file FILE` | Applies a unified diff to the current body (`-` reads stdin) |
+
+`--patch-file` takes standard `git diff` output. Hunks are located by exact context match, not by line number, so a patch applies to the right place or fails with `patch_conflict`; there is no fuzzy matching and no PATCH is sent on failure. Generate the diff against the body `workctl issue show` just returned, and use `--expect-updated-at` with that issue's `updated_at` to refuse the write if someone edited it in between.
+
+`--attach FILE[#ALT]` uploads a file on create or edit; GitHub exposes attachment upload only through the `gh issue` command, so a request carrying attachments uses that path and the body still travels on stdin. Alt text is optional and follows `#`.
+
+This reference is duplicated by `workctl issue --help` and `workctl issue edit --help`, which are generated from the same definitions that parse the flags. For an agent, `--help` is the cheaper and safer source: it is read only when needed and cannot drift from the binary.
+
+## Repository context
+
+Inside a Git worktree, `workctl` resolves the repository from the `origin` remote and infers GitHub from its host. Outside a Git worktree, pass both `--provider github` and `--repo owner/repo`. The CLI never assumes GitHub for an unknown or GitLab remote.
+
+Provider precedence is `--provider`, project configuration, then the Git remote host. Repository precedence is `--repo`, then the `origin` remote. Only GitHub is implemented in v0.
+
+Optional strict JSON configuration files are discovered at the Git root and validated on every command, even when CLI flags override provider/repository values:
+
+- `.workctl.json` can be committed for project-wide defaults.
+- `.workctl.local.json` overrides fields locally and is gitignored.
+
+Both files must be regular, non-symlink files no larger than 64 KiB. The only supported fields are `provider` and `workItemProvider`, each with value `github` or `gitlab`. A GitLab selection fails explicitly because GitLab support is not part of v0. Unknown fields and malformed JSON fail closed. Legacy `.mcp-tracker*.json` configuration is not read or migrated.
+
+Example:
 
 ```json
 {
-  "mcpServers": {
-    "tracker": {
-      "command": "node",
-      "args": ["/path/to/mcp-tracker/dist/index.js"],
-      "env": {}
-    }
-  }
+  "workItemProvider": "github"
 }
 ```
 
-> Do not set `CODE_PROVIDER`/`TASK_PROVIDER` in the client env unless you want a global fallback. Each project picks its own providers in `.mcp-tracker.json`.
+## Safety and scope
 
-### 3. Configure per project
+GitHub requests use `gh` argument arrays; create and edit request bodies are sent as JSON on stdin, except when attachments require the `gh issue` command, which still receives the body on stdin. No shell, direct HTTP client, token management, or automatic download of `gh` is used. One absolute 30-second deadline covers each child process and its pipe workers; captured stdout and drained stderr are capped at 8 MiB each. Body text read from a file or stdin is capped at 1 MiB. Provider diagnostics and internal paths are not copied into user-facing errors.
 
-Create `.mcp-tracker.json` at the repo root. See the sections below for each field.
-
-## Project configuration
-
-`.mcp-tracker.json` and `.mcp-tracker.local.json` share the same schema. The local file overrides the versioned one field by field, with one exception: `defaults.labels` is concatenated and deduplicated across both files.
-
-### Providers
-
-```json
-{
-  "codeProvider": "github",
-  "taskProvider": "github-projects",
-  "localTaskDir": ".tasks"
-}
-```
-
-- `codeProvider`: `github` | `gitlab`
-- `taskProvider`: `github-projects` | `gitlab` | `local`
-- `localTaskDir`: directory for local tasks when `taskProvider` is `local` (default: `.tasks`)
-
-Use `taskProvider: "local"` for file-based tracking with markdown files and no external account.
-
-### Repo and board
-
-```json
-{
-  "repo": "owner/repo",
-  "boardId": "1"
-}
-```
-
-- `repo`: `owner/repo`. Optional when derived from the git remote.
-- `boardId`: GitHub Projects V2 number. Only needed for boards.
-
-### Project labels
-
-```json
-{
-  "labels": ["🚧 feature", "🚧 fix", "🚧 refactoring", "🖥️ ia"]
-}
-```
-
-`labels` is the project's allowed label vocabulary. It is read from the project config and exposed to tool schemas; it is never fetched as a startup catalog. Put labels that should be applied automatically under `defaults.labels` instead. The local config can add vocabulary and personal defaults.
-
-### Defaults
-
-Values applied automatically when a tool does not receive the argument explicitly:
-
-```json
-{
-  "defaults": {
-    "baseBranch": "main",
-    "mergeMethod": "squash",
-    "deleteBranchOnMerge": true,
-    "reviewers": ["ana"],
-    "assignee": "ana",
-    "milestone": "Sprint 12",
-    "labels": ["agent"]
-  }
-}
-```
-
-- `mergeMethod`: `merge` | `squash` | `rebase`
-- `deleteBranchOnMerge`: delete the source branch after `merge_pr`. GitLab does this in the merge call itself; GitHub does an extra ref-delete call after a successful merge, best-effort (failure surfaces as a warning, the merge itself is unaffected).
-- `assignee`: use `"$current"` to resolve to the authenticated account (GitLab: `GET user`, GitHub: `gh api /user`). Not resolved by the `local` provider — there is no authenticated account to resolve against, so `"$current"` is stored as a literal string.
-- `milestone`: use `"$current"` to dynamically resolve to the active milestone with the nearest upcoming due date
-- `labels`: labels applied on issue/PR creation
-
-### Issue metadata
-
-Native issue types and board fields are loaded once during startup and exposed directly in tool schemas. Labels use the configured vocabulary from `labels`; milestone names are resolved only when used. `issue_fields` targets native GitHub Issue Fields; `fields` targets writable Projects V2 fields: text, number, date, single-select, multi-select, and iteration.
-
-`list_issues` and `list_prs` return summaries without bodies. Use the corresponding `get_*` tool only for the selected item. `list_issues` accepts `parent` for direct sub-issues and `linked_to` for linked issues; `list_prs` accepts `linked_to` for pull requests linked to an issue. Contextual filters cannot be mixed with global state, label, or assignee filters. `create_branch` requires a descriptive `branch_name` in the form `<type>/<issue>-<2-8-word-purpose>`, such as `feat/96-distribute-and-promote-model-candidates`; use lowercase ASCII, include the issue number, and do not copy the full title. The tool checks out the branch locally and fetches remotes when necessary.
-
-### Work-item shape
-
-One issue is the normal unit of work: its body holds the goal, acceptance, and
-verification; linked documents remain canonical in the repository. Use issue
-comments or updates when phase evidence or status changes need to be recorded.
-Create a parent or child issue only when a
-piece has independent acceptance, ownership, deployment, dependency, or review
-scope. An outcome/epic is therefore a grouping mechanism for multiple delivery
-items, not a mandatory wrapper around every change.
-
-### Workflow
-
-Defines status columns and the automations that move issues between them:
-
-```json
-{
-  "workflow": {
-    "stages": [
-      { "key": "design", "name": "In design" },
-      { "key": "doing",  "name": "Doing" },
-      { "key": "review", "name": "In Review" },
-      { "key": "done",   "name": "Done" }
-    ],
-    "on": {
-      "createIssue": "design",
-      "createBranch": "doing",
-      "createPr": "review",
-      "reviewApproved": "done",
-      "mergePr": "done"
-    }
-  }
-}
-```
-
-- `stages`: ordered list of columns. Each stage is `{ key, name }` or `{ key, name, id }` (fixed native id, no resolution).
-- `on`: maps events to stage keys:
-  - `createIssue`: new issues land in this stage
-  - `createBranch`: creating a branch moves its issue to this stage
-  - `createPr`: creating a PR moves its issues to this stage
-  - `reviewApproved`: approving a PR moves its issues to this stage
-  - `mergePr`: a successful merge moves its issues to this stage
-
-### Id or name
-
-Most identifiers accept a human-readable name and fall back to the native id when needed:
-
-- `boardId` (GitHub Projects): opaque project node id, `owner/project-number` for a user/org project, or `owner/repo/project-number` for a repository project.
-- `workflow.stages`: each stage is `{ key, name }` or `{ key, name, id }`.
-- Labels (GitHub): name or numeric label id.
-- Milestones: title, `"$current"`, or the native number/id.
-- Assignees/reviewers: username, or `"$current"` for the authenticated account.
-
-Names are preferred in versioned configs because they stay readable across renames. Use ids when names are ambiguous.
-
-### Local configuration
-
-`.mcp-tracker.local.json` is useful for personal preferences. The project automatically adds the entry to `.gitignore`.
-
-```json
-{
-  "defaults": {
-    "assignee": "me",
-    "labels": ["my-team"]
-  }
-}
-```
-
-- `defaults` fields override the versioned file, except `labels`, which is concatenated.
-
-## Complete example
-
-```json
-{
-  "codeProvider": "github",
-  "taskProvider": "github-projects",
-  "repo": "my-org/my-repo",
-  "boardId": "1",
-  "defaults": {
-    "baseBranch": "main",
-    "mergeMethod": "squash",
-    "reviewers": ["ana"],
-    "assignee": "ana",
-    "milestone": "$current",
-    "labels": ["agent"]
-  },
-  "workflow": {
-    "stages": [
-      { "key": "backlog", "name": "Backlog" },
-      { "key": "doing", "name": "Doing" },
-      { "key": "review", "name": "In Review" },
-      { "key": "done", "name": "Done" }
-    ],
-    "on": {
-      "createIssue": "backlog",
-      "createBranch": "doing",
-      "createPr": "review",
-      "mergePr": "done"
-    }
-  }
-}
-```
-
-## Provider-specific capabilities
-
-Attachments are accepted directly by `create_issue`, `update_issue`,
-`add_issue_comment`, `add_pr_comment`, and `create_pr` when the configured
-provider supports them. `linked_to` is currently available with GitLab's native
-issue and merge-request relationship endpoints; other providers reject that
-filter explicitly rather than approximating it.
-
-## Development
-
-```bash
-npm install
-npm run build   # compile to dist/
-npm test        # vitest + typecheck
-```
-
-## Documentation
-
-- `docs/architecture.md`: architecture decisions, business rules, and internal flows
-- `docs/srs.md`: detailed functional and non-functional requirements
+The first release does not include GitLab, pull requests, boards, comments, relationships, checklists, attachment management beyond uploading, issue deletion, or MCP transport. See [vision](docs/product/vision.md), [requirements](docs/srs.md), [architecture](docs/architecture.md), [ADR-0004](docs/adr/0004-workctl-rust-cli.md), and [ADR-0005](docs/adr/0005-attachments-and-non-rewrite-body-edits.md).

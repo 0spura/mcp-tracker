@@ -1,189 +1,161 @@
-# SRS: mcp-tracker
+# SRS: workctl v0
 
 > Vision: [docs/product/vision.md](./product/vision.md)
+> Architecture: [docs/architecture.md](./architecture.md)
 
-Actors: the **agent** (MCP client, e.g. Claude Code) and the **developer** who configures the server via environment variables. The agent is the caller of every tool; observable behavior below is defined at the MCP tool boundary.
+Actors: a developer or coding agent running `workctl` locally. Observable behavior is defined at the CLI boundary: arguments, stdout, stderr, exit code, and remote GitHub issue state.
 
-# 1. Functional Requirements
+## 1. Functional requirements
 
-## RF-CTX: Configuration and scope
+### RF-CLI.1: Issue command surface
+**Priority:** Must Have | **Status:** Implemented | **Dependencies:** none
 
-### RF-CTX.1: Project configuration
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
-* Repository, board, defaults, providers, and workflow are configured per project; tools accept explicit overrides where applicable.
-* Issue-targeting tools require an explicit issue number. Mutable session context is not exposed.
+- Commands: `workctl issue create`, `list`, `show`, and `edit`.
+- `--repo OWNER/REPO`, `--provider`, and `--format json|text` are global overrides.
+- Help and version work without `git` or `gh` installed.
+- Every flag carries a help description, and each subcommand prints usage examples for the behavior a caller cannot infer from flag names — for `edit`, the body-change set and the exact-match patch contract.
+- There is no issue-delete command in v0.
 
-### RF-CTX.2: Resolution precedence
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
-* Values resolve in this order: explicit tool argument > config file > git derivation.
-* Config is read from `.mcp-tracker.json` (versioned) with field-level overrides from `.mcp-tracker.local.json` (gitignored). The schema is nested: top-level `repo`, `boardId`, `labels` (bounded label vocabulary); `defaults` (`baseBranch`, `mergeMethod`, `deleteBranchOnMerge`, `reviewers`, `assignee`, `milestone`, `labels`); `workflow` with ordered `stages` and `on` automation triggers.
-* `create_issue` accepts the provider's native issue type through `type`.
-* GitHub issue creation and update accept `issue_fields`, a name/value map for organization-level Issue Fields. The existing `fields` parameter remains scoped to Project V2 fields.
-* Native issue types and board fields are loaded once at startup and exposed in tool schemas. Labels are constrained by the project-configured `labels` vocabulary and are never fetched as a startup catalog. Milestone names are resolved only when used.
-* `defaults` fields merge with the local file winning per field, except `labels`, which concatenates versioned + local with dedupe: project labels stay in the versioned file, personal labels (team, own scope) in the gitignored local one, and issues get both.
-* A stage value given as a name is resolved to the provider's native option ID once per server process and cached; an explicit `id` skips resolution.
-* An invalid JSON config file produces a clear error in the tool response, not silent ignore.
+**Acceptance:** `workctl issue --help` lists exactly the four supported subcommands; invoking an unknown command produces a structured JSON error on stderr and a nonzero exit. No flag in any subcommand help is printed without a description, and `workctl issue edit --help` documents the `patch_conflict` failure and exact-context matching.
+**Verification:** CLI integration test.
 
-### RF-CTX.3: Git derivation
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
-* When `repo` is not set anywhere, it is derived from `git remote get-url origin` (SSH and HTTPS forms, with or without `.git`).
-* Repository derivation failure resolves to "unset" without error.
+### RF-WI.1: Create an issue
+**Priority:** Must Have | **Status:** Implemented | **Dependencies:** RF-CFG.1, RF-PRV.1
 
-## RF-PRV: Provider model
+- `create` requires a nonblank title and accepts an optional body from `--body` or `--body-file FILE`, where `-` reads standard input.
+- `--attach FILE[#ALT]` may be repeated to upload files with optional alt text; every path must be an existing regular file.
+- The command returns the created issue's number, title, body, state, URL, and timestamps.
+- Missing body creates an issue with an empty body; no interactive prompt is opened.
 
-### RF-PRV.1: Provider selection
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
-* Providers are selected with precedence: project config file (`.mcp-tracker.json` fields `codeProvider`, `taskProvider`, `localTaskDir`) > environment (`CODE_PROVIDER`, `TASK_PROVIDER`, `LOCAL_TASK_DIR`) > defaults (`CODE_PROVIDER` = `github`; no task provider).
-* `CODE_PROVIDER` accepts `github` and `gitlab`.
-* `TASK_PROVIDER` accepts `github-projects`, `gitlab`, and `local`; when unset everywhere, issue, comment, board, and metadata tools are not registered.
-* `TRACKER_PROVIDER` remains accepted as a backwards-compatible alias for `CODE_PROVIDER` (env only).
-* An unknown provider value fails server startup with an error naming the valid values.
+**Acceptance:** A create request with a title and multiline body creates one GitHub issue; the returned JSON represents the provider response. Missing/blank title, a missing attachment file, and `--body` combined with `--body-file` fail before invoking `gh`. A request with attachments uploads them through the `gh issue` command and still returns the created issue.
+**Verification:** Integration test with an isolated `gh` fixture, a payload-safety test, and an attachment-routing test.
 
-### RF-PRV.2: Capability-based tool registration
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-PRV.1
-* A provider bundle declares its capabilities by member presence (`code`, `issue`, `board`) plus the scopes it requires (`requires: ('repo' | 'board')[]`); tools are registered only for declared capabilities, and a tool fails with a clear error only when a scope its provider requires is unresolvable.
-* Labels and milestones are optional sub-capability methods on the issue provider, not a separate capability.
-* Capability map:
-  * `github` = code (requires repo).
-  * `gitlab` = code (requires repo).
-  * `github-projects` = issue + board integration + checklist + sub-issues + relationships (requires repo).
-  * `gitlab` = issue + board integration + checklist + sub-issues + relationships + labels + milestones + time tracking + attachments + related-issue/MR reads (requires repo).
-  * `local` = issue + checklist + relationships + labels (requires no scope); milestones are explicitly unsupported.
-* Tools for an undeclared capability are absent from the tool list (not registered-and-failing).
+### RF-WI.2: List issues
+**Priority:** Must Have | **Status:** Implemented | **Dependencies:** RF-CFG.1, RF-PRV.1
 
-### RF-PRV.3: Local provider storage
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-PRV.1
-* `local` stores issues as markdown files with frontmatter in `LOCAL_TASK_DIR` (default `.tasks`).
-* Renaming an issue title renames the file so the slug stays in sync.
-* Titles containing double quotes round-trip unchanged through write and read.
+- `list` returns summaries without issue bodies and never includes pull requests.
+- State filter is `open`, `closed`, or `all`; default is `open`.
+- `--limit` defaults to 30, accepts 1–1000, and bounds the number of returned issues.
+- Filters pass through as fixed flags: `--label` (repeatable), `--assignee`, `--author`, `--mention`, `--milestone`, `--search`, and `--type`. Blank filter or label values are rejected; no raw provider arguments can be injected.
 
-## RF-BRN: Branches
+**Acceptance:** The output contains at most the requested limit, contains only issues, and omits body fields. Invalid state/limit values and blank filters fail before invoking `gh`; supplied filters appear in the provider invocation.
+**Verification:** Integration tests for filters, bound edges, summary shape, and filter arguments.
 
-### RF-BRN.1: Create branch
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-CTX.2
-* `create_branch` creates a branch off the repo's default branch.
-* `issue_number` and `branch_name` are required. `branch_name` must be lowercase ASCII, at most 96 characters, include the issue number, and follow `<type>/<number>-<2-8-word-purpose>` (for example, `feat/96-distribute-and-promote-model-candidates`). Agents must not copy the full issue title.
-* After the remote branch is created or reused, `create_branch` checks out the resulting branch in the local workspace. If it is not local yet, the tool fetches remotes and tracks `origin/<name>`.
-* Creating an already-existing linked branch returns the existing branch instead of failing (idempotent).
-* When `statusLabels.doing` is configured, the issue status moves to that label; automation failures surface as a warning field in the response, never silently.
+### RF-WI.3: Show an issue
+**Priority:** Must Have | **Status:** Implemented | **Dependencies:** RF-CFG.1, RF-PRV.1
 
-## RF-PRS: Pull requests
+- `show NUMBER` returns the selected issue with its body and normalized `open|closed` state.
+- `NUMBER` must be a positive integer; a pull request number is not accepted as an issue.
 
-### RF-PRS.1: PR lifecycle tools
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-CTX.2
-* `create_pr`, `update_pr`, `get_pr`, `list_prs`, `get_pr_checks`, `merge_pr` behave as documented in the README.
-* `create_pr` applies configured `baseBranch` and `reviewers` and requires a non-empty `issues` list; each issue becomes a closing keyword line (`Closes #N`).
-* `create_pr` accepts `attachments` (local file paths, uploaded via the task provider's `attachFile` and appended to the body); a call with attachments when no task provider is configured throws `UnsupportedError`.
-* `update_pr` is the generic PR edit tool: it accepts title, body, state (close/reopen), draft/ready, labels, milestone, and batch reviewer and assignee changes (`add_reviewers`, `remove_reviewers`, `add_assignees`, `remove_assignees`) in one call.
+**Acceptance:** Valid issue details are returned; zero, malformed identifiers, missing issues, and pull requests produce structured errors without leaking provider stderr.
+**Verification:** Integration tests with provider fixtures.
 
-### RF-PRS.2: PR review tools
-**Priority:** Should Have | **Status:** Accepted | **Dependencies:** RF-PRS.1
-* `get_pr_diff` returns the PR's diff as the reviewer would see it remotely, truncated to a bounded size with the truncation reported.
-* `submit_pr_review` requires issue numbers and moves those issues through `workflow.on.reviewApproved` after approval.
-* Inline comment positions refer to the remote diff; comments that cannot be positioned produce a `warnings` entry while the rest of the review is submitted.
-* `merge_pr` requires issue numbers and moves those issues through `workflow.on.mergePr` after merge.
-* `merge_pr` applies configured `deleteBranchOnMerge` (or explicit `delete_branch`) after a successful merge. A deletion failure surfaces as a warning and never fails the completed merge.
-* `get_pr_checks` truncates long check logs to a bounded tail (never returns unbounded output).
+### RF-WI.4: Edit an issue
+**Priority:** Must Have | **Status:** Implemented | **Dependencies:** RF-CFG.1, RF-PRV.1
 
-## RF-ISS: Issues
+- `edit NUMBER` accepts a title change, one body change, attachments, or any combination; at least one change is required.
+- Body changes never require the caller to reproduce the whole body: `--body`/`--body-file` replaces it, `--append-body`/`--append-body-file` appends, `--replace-section HEADING` with `--section-body`/`--section-body-file` replaces one ATX section, and `--patch-file` applies a unified diff.
+- `--patch-file` applies hunks by exact context match. Unmatched context is a `patch_conflict` error and no PATCH is sent; line numbers are not trusted. Body text from a file or stdin is UTF-8 and capped at 1 MiB.
+- At most one body-change flag may be supplied, and `--replace-section` requires its section body. Violations fail before invoking `gh`.
+- `--attach FILE[#ALT]` may be repeated; the write goes through the `gh issue` command and the updated issue is returned.
+- `--expect-updated-at TIMESTAMP` fails with `conflict` when the fetched issue's `updated_at` differs, before any PATCH.
+- An omitted field remains unchanged. An explicitly empty body clears the body; a blank title is rejected.
 
-### RF-ISS.1: Issue CRUD
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-CTX.3
-* `list_issues` returns bounded summaries without bodies. `get_issue` returns the selected full item; issue reads and mutations require `number`.
-* `create_issue` auto-adds the issue to the configured board.
-* `create_issue` accepts relationships, parent, board fields, and attachments in one call. Initial status comes only from `workflow.on.createIssue`. Secondary failures are returned as warnings.
-* `update_issue` consolidates metadata, attachments, relationships, parent assignment, and board fields. It adds the issue to an explicit-membership board when fields are supplied and membership is missing.
-* The milestone title `"$current"` (config default or tool argument) resolves to the active/open milestone with the nearest upcoming due date; undated and past-due milestones are skipped and the call errors clearly when none qualifies.
-* The assignee (or PR reviewer/assignee) username `"$current"` resolves to the authenticated account (GitLab `GET user`, GitHub `GET /user`), resolved once per provider instance and cached. Not resolved by the `local` provider, which has no authenticated account; `"$current"` there is stored as a literal string.
-* If the board add fails after the issue was created, the tool returns the created issue with a `warnings` entry describing the failure; it does not fail the whole call.
-* `update_issue`: a provider that cannot honor a field returns an explicit error instead of silently dropping it.
+**Acceptance:** Editing only the title preserves body; `--body ""` clears it; append, section replacement, and patch produce exactly the expected body in the PATCH payload while the issue is fetched once; a non-applying patch and a stale `--expect-updated-at` produce `patch_conflict`/`conflict` with no PATCH; no-field, blank-title, conflicting, and incomplete body-change requests fail before `gh`; pull-request numbers fail before any PATCH.
+**Verification:** Integration tests for partial updates, body clearing, each body change, the concurrency guard, and attachment routing; unit tests for the body and patch policies.
 
-### RF-ISS.2: Issue status
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-CTX.1
-* Status transitions are driven by configured workflow events during create, branch, PR, review, and merge operations.
+### RF-CFG.1: Project configuration
+**Priority:** Must Have | **Status:** Implemented | **Dependencies:** none
 
-### RF-ISS.3: Checklist, sub-issues, relationships
-**Priority:** Should Have | **Status:** Accepted | **Dependencies:** RF-PRV.2
-* `toggle_checklist_item` marks/unmarks a checklist item matched by partial text; the matching logic lives in one shared place.
-* `update_issue.parent` assigns a parent; `list_sub_issues` reads children when supported.
-* Relationship mutations are consolidated in `create_issue` and `update_issue`.
-* A provider with no mechanism for a relationship type returns an explicit error instead of degrading silently.
+- Both optional files are discovered at the Git worktree root and validated on every command invocation, even when CLI flags override selected values. Local fields override shared fields.
+- The v0 schema contains only `provider` and `workItemProvider`; each accepts `github` or `gitlab`. Files must be regular, non-symlink files no larger than 64 KiB. Unknown keys and invalid JSON fail closed.
+- `.workctl.local.json` is gitignored. Old `.mcp-tracker*.json` files are not read or migrated.
+- No configuration file is required when the provider and repository can be resolved from flags or the Git remote.
 
-## RF-CMT: Comments
+**Acceptance:** Local provider fields override shared fields; malformed, unknown, oversized, symlink, or non-regular configuration yields a safe JSON error even when flags provide the effective provider/repository; legacy filenames have no effect.
+**Verification:** Configuration unit tests using temporary Git roots.
 
-### RF-CMT.1: Comment tools
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** RF-CTX.3
-* `add_issue_comment`, `add_pr_comment`, `list_comments` (issue or PR target) behave as documented; issue comments route to the task provider, PR comments to the code provider.
-* `add_issue_comment` and `add_pr_comment` accept `attachments` (local file paths); each is uploaded via the task provider's `attachFile` (project-scoped, not issue-scoped, so it applies to PR comments too) and its markdown link is appended to the comment body before posting.
+### RF-CFG.2: Provider and repository resolution
+**Priority:** Must Have | **Status:** Implemented | **Dependencies:** RF-CFG.1
 
-## RF-BRD: Board
+- Provider precedence: explicit `--provider` > `workItemProvider` > `provider` > known Git remote host.
+- Repository precedence: explicit `--repo OWNER/REPO` > repository parsed from `origin` remote.
+- v0 implements only GitHub. A GitLab selection or unknown remote host fails explicitly; it never falls back to GitHub.
+- When outside a Git worktree, an explicit provider and repository are required.
 
-### RF-BRD.1: Board integration
-**Priority:** Should Have | **Status:** Accepted | **Dependencies:** RF-CTX.1, RF-PRV.2
-* Board fields are loaded at startup and exposed in issue tool schemas. Labels are not enumerated at startup because large label catalogs waste context and can be truncated by provider pagination.
-* `create_issue` and `update_issue` own board membership and field updates; no standalone board tools are exposed.
+**Acceptance:** HTTPS and SSH GitHub remotes resolve to the same `owner/repo`; GitLab/unknown hosts and missing scope fail closed; explicit overrides take precedence.
+**Verification:** Unit tests for resolution and remote parsing.
 
-## RF-MTD: Metadata
+### RF-OUT.1: Output contract
+**Priority:** Must Have | **Status:** Implemented | **Dependencies:** RF-CLI.1
 
-### RF-MTD.1: Labels and milestones
-**Priority:** Could Have | **Status:** Accepted | **Dependencies:** RF-PRV.2
-* Labels and open milestones are not standalone tools. Labels remain textual inputs and open milestones are resolved on demand, avoiding an unbounded startup catalog.
-* A provider without a real milestone concept returns an explicit "not supported" error instead of fabricated entries.
+- Success output is compact JSON by default; `--format text` selects human-readable output.
+- Text output escapes terminal control characters in provider values; issue-body newlines and tabs remain layout characters.
+- Errors are one JSON object on stderr with a stable `code` and safe `message`; all failures exit nonzero and leave stdout empty.
+- User-facing errors do not include raw `gh` stderr, credentials, stack traces, or internal paths.
 
-### RF-MTD.2: Time tracking, attachments, and related-item reads (GitLab only)
-**Priority:** Could Have | **Status:** Accepted | **Dependencies:** RF-PRV.2
-* `log_time` logs spent and/or estimated time on an issue via GitLab's native time-tracking endpoints (`add_spent_time`, `time_estimate`), each call independent and best-effort with failures collected into `warnings`. Not implemented for GitHub, which has no native time tracking; the tool is absent for that provider.
-* Attachments are accepted directly by create, update, and comment tools; no standalone upload tool is exposed.
-* `list_linked_items` reads issues and/or merge requests linked to an issue (GitLab's `/links` and `/related_merge_requests` endpoints), filtered by a `type` argument (`issues` | `prs` | `all`, default `all`) so the two link kinds share one tool instead of two. Not implemented for GitHub in this pass; a reliable equivalent needs GraphQL timeline-event parsing, left as a documented gap rather than a partial implementation.
-* These tools are absent from the tool list for providers that don't implement the underlying capability, consistent with RF-PRV.2's "tools for an undeclared capability are absent" rule — never registered-and-failing.
+**Acceptance:** Success and failure tests assert output stream, format, and exit status; raw fixture stderr never appears in the error response.
+**Verification:** CLI integration tests.
 
-# 2. Non-Functional Requirements
+## 2. Non-functional requirements
 
-## RNF-ASY: Asynchrony
+### RNF-SEC.1: Safe external command boundary
+**Priority:** Must Have | **Status:** Implemented | **Dependencies:** none
 
-### RNF-ASY.1: No blocking calls
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
-* No synchronous process execution (`execFileSync`, `execSync`) anywhere in `src/`; verifiable by a lint/grep check in CI or a test.
-* One hung or slow CLI call does not block other tool calls (concurrent tool invocation completes while another is in flight).
+- GitHub operations invoke the authenticated `gh` CLI with argument arrays; no shell is used.
+- Create/edit payloads are JSON on stdin, not interpolated into a shell or URL.
+- `workctl` never reads, stores, or logs GitHub tokens. It does not download `gh` automatically.
 
-### RNF-ASY.2: Timeouts
-**Priority:** Should Have | **Status:** Accepted | **Dependencies:** RNF-ASY.1
-* Every subprocess call has a timeout (default ≤ 60s) and surfaces a timeout error distinct from a CLI failure.
+**Acceptance:** Hostile shell-like title/body text is preserved as data; code review confirms no shell invocation or token access.
+**Verification:** Payload-safety test and source review.
 
-## RNF-SEC: Command and query safety
+### RNF-EXT.1: Bounded subprocess execution
+**Priority:** Must Have | **Status:** Implemented | **Dependencies:** none
 
-### RNF-SEC.1: No string interpolation into shell or GraphQL
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
-* Subprocess invocation uses argument arrays only; GraphQL uses variables only; verifiable by code review plus a test passing hostile strings (quotes, `$()`, newlines) through every input-accepting tool without injection.
+- One absolute 30-second deadline covers child completion and all pipe/input worker completion; a still-running direct child is killed at expiry.
+- Captured stdout and drained stderr each have an 8 MiB upper bound; timeout and output-limit failures map to safe structured errors.
 
-## RNF-DOM: Domain normalization
+**Acceptance:** A hanging child or inherited pipe is reported as timeout; oversized stdout/stderr does not grow memory without bound.
+**Verification:** Process-runner tests.
 
-### RNF-DOM.1: Normalized shared types
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
-* `Issue.state` and `PR.state` are `open | closed | merged` (as applicable) regardless of provider casing; verifiable in the contract test suite.
-* Provider raw responses are validated (not blind-cast) at the provider boundary; malformed CLI output yields a descriptive error.
+### RNF-DOM.1: Validated provider responses
+**Priority:** Must Have | **Status:** Implemented | **Dependencies:** none
 
-## RNF-TST: Testing
+- Provider JSON is parsed into typed issue structures; required fields and allowed state values are validated.
+- GitHub state casing is normalized to `open|closed`.
 
-### RNF-TST.1: Contract test suite
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
-* One shared test suite encodes the `IssueProvider` contract and runs against every implementation (github-projects with mocked transport, local with a temp dir).
-* `npm test` runs the suite plus typecheck.
+**Acceptance:** Malformed JSON, missing required fields, and unknown states fail explicitly; valid provider records serialize with stable CLI field names.
+**Verification:** Provider mapping tests.
 
-## RNF-CMP: External compatibility
+### RNF-DIST.1: Native binary
+**Priority:** Must Have | **Status:** Implemented | **Dependencies:** none
 
-### RNF-CMP.1: Stable tool contract
-**Priority:** Must Have | **Status:** Accepted | **Dependencies:** none
-* Tool names, parameter names, and README-documented behaviors are unchanged by the rewrite; verifiable by a snapshot test of the registered tool list against the README table.
-* Additive extensions approved 2026-07-30 (composite create/update parameters on issue and PR tools) do not violate this requirement: existing parameters keep their names and semantics.
+- The project builds as a Rust stable binary named `workctl`; `Cargo.lock` records resolved dependencies.
+- The CLI parser uses the latest stable `clap` release selected for the implementation.
 
-# 3. Glossary
+**Acceptance:** `cargo build --release` produces an executable `workctl` and `workctl --version` succeeds.
+**Verification:** Release build and binary smoke run.
 
-**Capability**: a named interface a provider may implement (code, issue, board, metadata) plus optional sub-capabilities (checklist, sub-issues, relationships).
-**Context**: project configuration and derived repository scope, with explicit > config > derived precedence.
-**Local provider**: task provider storing issues as markdown files on disk, requiring no external account.
+### RNF-TST.1: Isolated behavior verification
+**Priority:** Must Have | **Status:** Implemented | **Dependencies:** RF-WI.1, RF-WI.2, RF-WI.3, RF-WI.4
 
-# 4. References
+- Tests exercise consumer-visible CLI output and provider boundaries without requiring network access or mutating a real repository.
+- At least one built-binary smoke run exercises a successful command and a failure path.
 
-- [docs/product/vision.md](./product/vision.md) — approved redesign decisions (2026-07-30)
-- [README.md](../../README.md) — external tool contract being preserved
+**Acceptance:** `cargo test` passes and the smoke run observes the expected stdout/stderr and exit status.
+**Verification:** Focused Cargo tests and isolated smoke fixture.
+
+## 3. Non-goals for v0
+
+- GitLab, Jira, local Markdown tracking, provider plugin systems.
+- Projects/board membership, workflow/status transitions, and label/assignee/milestone *management*. Filtering a list by these values is supported; changing them is not.
+- Branches, pull/merge requests, review, comments, relationships, checklists.
+- Attachment listing, removal, or download. Uploading attachments on create/edit is supported; nothing else about them is.
+- Issue deletion, interactive prompts, MCP transport, direct HTTP, token management, retries, telemetry.
+- Three-way merge or fuzzy patch application: a patch either matches the fetched body exactly or fails.
+
+## 4. Glossary
+
+- **Issue:** GitHub issue, excluding pull requests.
+- **Repository target:** `owner/repo`, selected explicitly or from the Git `origin` remote.
+- **Worktree config:** optional project configuration found at the Git root; local config is untracked and overrides the shared file.

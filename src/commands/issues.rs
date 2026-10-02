@@ -1,0 +1,247 @@
+use std::fs;
+use std::io::Read;
+use std::path::Path;
+
+use crate::cli::{EditArgs, IssueAction, IssueArgs, ListArgs, OutputFormat};
+use crate::config::{self, Provider};
+use crate::domain::AppError;
+use crate::output::{self, SuccessOutput};
+use crate::providers::github::issues::GitHubIssues;
+use crate::providers::{Attachment, BodyChange, IssuePatch, IssueQuery, NewIssue, WorkItemProvider};
+
+/// Upper bound for any body text read from a file or standard input.
+const MAX_TEXT_BYTES: u64 = 1024 * 1024;
+
+pub(super) fn execute(
+    explicit_provider: Option<Provider>,
+    explicit_repo: Option<&str>,
+    format: OutputFormat,
+    args: IssueArgs,
+) -> Result<(), AppError> {
+    let output = match args.action {
+        IssueAction::Create(args) => {
+            validate_title(&args.title)?;
+            let body = match (args.body.as_deref(), args.body_file.as_deref()) {
+                (Some(_), Some(_)) => {
+                    return Err(AppError::invalid_input("use either --body or --body-file"));
+                }
+                (Some(text), None) => text.to_owned(),
+                (None, Some(file)) => read_source(file)?,
+                (None, None) => String::new(),
+            };
+            let attachments = parse_attachments(&args.attach)?;
+            let provider = provider(explicit_provider, explicit_repo)?;
+            SuccessOutput::Issue(provider.create(&NewIssue {
+                title: args.title,
+                body,
+                attachments,
+            })?)
+        }
+        IssueAction::List(args) => {
+            let query = query(&args)?;
+            let provider = provider(explicit_provider, explicit_repo)?;
+            SuccessOutput::Issues(provider.list(&query)?)
+        }
+        IssueAction::Show { number } => {
+            let provider = provider(explicit_provider, explicit_repo)?;
+            SuccessOutput::Issue(provider.show(number.0)?)
+        }
+        IssueAction::Edit(args) => {
+            if let Some(title) = args.title.as_deref() {
+                validate_title(title)?;
+            }
+            let change = body_change(&args)?;
+            let attachments = parse_attachments(&args.attach)?;
+            if args.title.is_none() && change.is_none() && attachments.is_empty() {
+                return Err(AppError::invalid_input(
+                    "edit requires --title, a body change, or --attach",
+                ));
+            }
+            let provider = provider(explicit_provider, explicit_repo)?;
+            SuccessOutput::Issue(provider.edit(
+                args.number.0,
+                &IssuePatch {
+                    title: args.title,
+                    body: change,
+                    attachments,
+                    expect_updated_at: args.expect_updated_at,
+                },
+            )?)
+        }
+    };
+    output::write(format, &output)
+}
+
+fn query(args: &ListArgs) -> Result<IssueQuery, AppError> {
+    for value in [
+        &args.assignee,
+        &args.author,
+        &args.mention,
+        &args.milestone,
+        &args.search,
+        &args.issue_type,
+    ] {
+        if value.as_deref().is_some_and(|value| value.trim().is_empty()) {
+            return Err(AppError::invalid_input("filter values must not be blank"));
+        }
+    }
+    for label in &args.labels {
+        if label.trim().is_empty() {
+            return Err(AppError::invalid_input("label values must not be blank"));
+        }
+    }
+    Ok(IssueQuery {
+        state: args.state.as_str().to_owned(),
+        limit: args.limit,
+        labels: args.labels.clone(),
+        assignee: args.assignee.clone(),
+        author: args.author.clone(),
+        mention: args.mention.clone(),
+        milestone: args.milestone.clone(),
+        search: args.search.clone(),
+        issue_type: args.issue_type.clone(),
+    })
+}
+
+fn body_change(args: &EditArgs) -> Result<Option<BodyChange>, AppError> {
+    let replacements = [
+        args.body.is_some(),
+        args.body_file.is_some(),
+        args.append_body.is_some(),
+        args.append_body_file.is_some(),
+        args.replace_section.is_some(),
+        args.patch_file.is_some(),
+    ];
+    if replacements.iter().filter(|present| **present).count() > 1 {
+        return Err(AppError::invalid_input(
+            "use only one of --body, --body-file, --append-body, --append-body-file, --replace-section, or --patch-file",
+        ));
+    }
+    if args.replace_section.is_some() {
+        let text = match (args.section_body.as_deref(), args.section_body_file.as_deref()) {
+            (Some(_), Some(_)) => {
+                return Err(AppError::invalid_input(
+                    "use either --section-body or --section-body-file",
+                ));
+            }
+            (Some(text), None) => text.to_owned(),
+            (None, Some(file)) => read_source(file)?,
+            (None, None) => {
+                return Err(AppError::invalid_input(
+                    "--replace-section requires --section-body or --section-body-file",
+                ));
+            }
+        };
+        return Ok(Some(BodyChange::ReplaceSection {
+            heading: args.replace_section.clone().unwrap_or_default(),
+            body: text,
+        }));
+    }
+    if args.section_body.is_some() || args.section_body_file.is_some() {
+        return Err(AppError::invalid_input(
+            "--section-body and --section-body-file require --replace-section",
+        ));
+    }
+    if let Some(text) = args.body.as_deref() {
+        return Ok(Some(BodyChange::Replace(text.to_owned())));
+    }
+    if let Some(file) = args.body_file.as_deref() {
+        return Ok(Some(BodyChange::Replace(read_source(file)?)));
+    }
+    if let Some(text) = args.append_body.as_deref() {
+        return Ok(Some(BodyChange::Append(text.to_owned())));
+    }
+    if let Some(file) = args.append_body_file.as_deref() {
+        return Ok(Some(BodyChange::Append(read_source(file)?)));
+    }
+    if let Some(file) = args.patch_file.as_deref() {
+        return Ok(Some(BodyChange::Patch(read_source(file)?)));
+    }
+    Ok(None)
+}
+
+/// Reads text from a file, or from standard input when `source` is `-`.
+fn read_source(source: &str) -> Result<String, AppError> {
+    if source == "-" {
+        return read_stdin();
+    }
+    let metadata = fs::metadata(source)
+        .map_err(|_| AppError::invalid_input("text source must be an existing regular file"))?;
+    if !metadata.is_file() {
+        return Err(AppError::invalid_input(
+            "text source must be an existing regular file",
+        ));
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(source)
+        .and_then(|file| file.take(MAX_TEXT_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|_| AppError::invalid_input("text source could not be read"))?;
+    decode(bytes)
+}
+
+fn read_stdin() -> Result<String, AppError> {
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .lock()
+        .take(MAX_TEXT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| AppError::invalid_input("standard input could not be read"))?;
+    decode(bytes)
+}
+
+fn decode(bytes: Vec<u8>) -> Result<String, AppError> {
+    if bytes.len() as u64 > MAX_TEXT_BYTES {
+        return Err(AppError::invalid_input("body text exceeds the size limit"));
+    }
+    String::from_utf8(bytes).map_err(|_| AppError::invalid_input("body text must be valid UTF-8"))
+}
+
+/// Parses `FILE[#ALT]` values and rejects files that do not exist.
+fn parse_attachments(values: &[String]) -> Result<Vec<Attachment>, AppError> {
+    values
+        .iter()
+        .map(|value| {
+            let (path, alt) = match value.split_once('#') {
+                Some((path, alt)) => (path, Some(alt)),
+                None => (value.as_str(), None),
+            };
+            if path.is_empty() {
+                return Err(AppError::invalid_input("attachment path must not be empty"));
+            }
+            let metadata = fs::metadata(path).map_err(|_| {
+                AppError::invalid_input("attachment must be an existing regular file")
+            })?;
+            if !metadata.is_file() {
+                return Err(AppError::invalid_input(
+                    "attachment must be an existing regular file",
+                ));
+            }
+            Ok(Attachment {
+                path: path.to_owned(),
+                alt: alt
+                    .filter(|alt| !alt.is_empty())
+                    .map(|alt| alt.to_owned()),
+            })
+        })
+        .collect()
+}
+
+fn provider(
+    explicit_provider: Option<Provider>,
+    explicit_repo: Option<&str>,
+) -> Result<GitHubIssues, AppError> {
+    let cwd = std::env::current_dir()
+        .map_err(|_| AppError::context("could not determine the current directory"))?;
+    let context = config::resolve_context(explicit_provider, explicit_repo, Path::new(&cwd))?;
+    let provider = GitHubIssues::new(context.repo);
+    provider.authenticate()?;
+    Ok(provider)
+}
+
+fn validate_title(title: &str) -> Result<(), AppError> {
+    if title.trim().is_empty() {
+        Err(AppError::invalid_input("title must not be blank"))
+    } else {
+        Ok(())
+    }
+}

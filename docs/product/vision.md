@@ -1,37 +1,27 @@
-# Vision: mcp-tracker
+# Workctl vision
 
-## Purpose
+## Problem
 
-mcp-tracker gives coding agents a compact, native interface to code hosts and issue trackers. Project defaults and metadata load once; issue-targeting operations require explicit identifiers.
+Developers and coding agents need a small local CLI for managing work items in the current repository. The existing MCP server is being replaced with a native Rust command-line tool, beginning with the GitHub issue workflow used most often.
 
-## Aspiration
+## Vision
 
-The reference MCP server for tracker workflows: one stable external tool contract, provider implementations behind clean capability interfaces, and a local markdown provider that works with zero external accounts. Any new provider (GitLab, Jira, Linear) plugs in by implementing interfaces, without touching the tool layer.
+`workctl` provides predictable, scriptable issue operations while leaving GitHub authentication to the official `gh` CLI. It infers the current repository from Git when possible, accepts explicit overrides, and reports machine-readable errors without exposing provider diagnostics.
 
-## Users
+## Initial users and outcomes
 
-A single developer running an agent locally against their own GitHub repos. They authenticate with the `gh` CLI, they want the agent to drive the full issue lifecycle (branch → PR → review → merge → status updates), and they occasionally work offline or without a tracker account via local markdown files.
+- Developers can create, list, inspect, and edit GitHub issues from a terminal.
+- Coding agents can invoke those same operations without an MCP host or direct access to credentials.
+- Scripts can consume compact JSON output and distinguish failures using stable error codes and exit status.
 
-## Principles
+## v0 boundary
 
-1. **CLI is the transport:** all GitHub/GitLab access goes through `gh`/`glab`, which own authentication. No token management in this project. This rules out direct HTTP clients.
-2. **Async is real:** no synchronous subprocess calls (`execFileSync`, `execSync`). Every provider call is genuinely asynchronous so one slow CLI call never blocks the server.
-3. **Capabilities are declarative:** a provider declares what it implements (code, issue, board, metadata, sub-issues, relationships). No duck-typing with `in`, no stateless delegator classes.
-4. **One domain vocabulary:** providers normalize into shared types. States are `open | closed | merged`, never vendor casing. Vendor-specific mechanisms (labels vs. board fields vs. frontmatter) stay inside the provider.
-5. **Never interpolate into shell or GraphQL:** subprocess calls use argument arrays; GraphQL uses variables. No string concatenation of untrusted or variable values.
-6. **The external tool contract stays compact:** related mutations are consolidated and metadata is represented in schemas instead of discovery tools.
+The initial release supports GitHub issue create/list/show/edit, including list filters, attachment upload, and body edits that never require rewriting the whole body. It excludes issue deletion, GitLab, pull requests, projects and boards, comments, relationships, checklists, attachment management beyond upload, token handling, direct HTTP, and MCP transport. See the [SRS](../srs.md) for observable requirements and [architecture](../architecture.md) for implementation boundaries.
 
-## Anti-goals
+## Design principles
 
-- Not a generic GitHub/GitLab API client; only the tracker workflow the agent needs.
-- Not multi-repo or multi-board concurrent processes.
-- Not an HTTP/SSE server; stdio transport only.
-- No GitLab providers in the rewrite (return later, once the architecture is validated).
-- No broad test coverage now; contract tests for the provider interfaces only.
-
-## Approved redesign decisions (2026-07-30)
-
-- **Total rewrite** of `src/`, preserving the external MCP tool contract (tool names, parameters, context behavior).
-- **Providers in scope:** `github` (CodeProvider), `github-projects` (Issue + Board + Metadata), `local` (Issue + Metadata, markdown files). GitLab providers are dropped from the tree.
-- **Testing:** minimal — a shared contract test suite that runs against every IssueProvider implementation.
-- Root causes being fixed: fake async (`execFileSync` everywhere), string interpolation into GraphQL/shell, triple-duplicated checklist logic, stateless delegator classes, vendor state leakage (`OPEN` vs `opened`), dead code, and silent best-effort automations.
+- Keep the CLI and provider boundary explicit; avoid an omnibus command or provider module.
+- Prefer Git context, with explicit provider and repository flags for automation and non-repository use.
+- Fail closed on ambiguous provider selection, invalid configuration, or malformed provider data.
+- Keep user-facing output stable and safe: JSON by default, optional text, no raw subprocess stderr.
+- Exercise behavior against isolated command fixtures; tests do not mutate live GitHub issues.

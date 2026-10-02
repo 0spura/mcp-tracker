@@ -1,31 +1,36 @@
-# Project: mcp-tracker
+# Project: workctl
 
 ## Stack
 
-- **Runtime:** Node.js ≥ 18, TypeScript strict, ESM (`NodeNext`).
-- **MCP:** `@modelcontextprotocol/sdk` over stdio transport only.
-- **Validation:** `zod` — tool inputs (MCP boundary) and raw CLI/GraphQL outputs (provider boundary).
-- **External CLIs:** `gh` (required for github providers) and `git` (context derivation). Auth is owned by `gh`; this project never handles tokens.
-- **Tests:** `vitest` (devDependency). No other test frameworks.
-- **Subprocess execution:** `node:child_process` `execFile` promisified in a single internal wrapper. `execSync`/`execFileSync` are banned in `src/`.
+- **Runtime:** native Rust binary, built with the stable toolchain.
+- **CLI:** `clap` derive API; 4.6.7 was the latest release checked on 2026-10-01.
+- **Serialization:** `serde` and `serde_json` for strict config and provider payloads.
+- **External CLIs:** `gh` for GitHub requests/authentication; `git` for worktree and remote discovery.
+- **Subprocesses:** `std::process::Command` behind one process runner; `wait-timeout` enforces the child deadline.
+- **Tests:** Rust unit and integration tests under Cargo. No network access or live issue mutation in tests.
 
 ## Global constraints
 
-- No HTTP clients, no token management (vision principle 1).
-- No synchronous process execution (vision principle 2).
-- No string interpolation into shell or GraphQL (vision principle 5).
-- External MCP tool contract is frozen by RNF-CMP.1.
+- No direct HTTP clients, token management, or automatic dependency downloads.
+- No shell invocation; untrusted values remain argument/stdin data.
+- User errors never include raw provider stderr, credentials, stack traces, or internal paths.
+- v0 supports GitHub issue create/list/show/edit only. GitLab and other old MCP capabilities are deferred.
+- Modules are split by ownership and reason to change; no omnibus `main.rs`, command, provider, or output module.
 
-## Repo structure
+## Repository layout
 
+```text
+src/              Rust binary modules
+tests/            CLI/provider integration tests
+docs/             vision, SRS, architecture, ADRs
+Cargo.toml        application manifest
+Cargo.lock        resolved application dependency versions
+rust-toolchain.toml stable Rust channel
+target/           local build output; not committed
 ```
-src/            TypeScript source (ESM)
-test/           vitest suites, including contract tests
-docs/           vision, SRS, architecture, ADRs
-dist/           build output (tsc), not committed
-```
 
-## Environments
+## Environments and verification
 
-- Single environment: the developer's machine, launched by an MCP client config with `CODE_PROVIDER` / `TASK_PROVIDER` env vars.
-- Build: `npm run build` (tsc). Dev: `tsx`. Verify: `npm test` (vitest + typecheck).
+- Runtime: developer machine with `git`, `gh`, and GitHub authentication configured.
+- `cargo test`: unit and isolated CLI tests.
+- `cargo build --release`: optimized local-target binary at `target/release/workctl`.
